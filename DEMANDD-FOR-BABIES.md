@@ -32,7 +32,7 @@ Think of the app as a restaurant:
 ```
 ┌────────────────────────────────────────────────┐
 │  FRONTEND (Kitchen)                             │
-│  Next.js + React + TypeScript + Tailwind CSS    │
+│  Vite + React + TypeScript + Tailwind CSS    │
 │  Runs on http://localhost:4028                  │
 │  What you see and click in your browser         │
 └────────────────┬───────────────────────────────┘
@@ -78,9 +78,9 @@ The backend is a **Python program** running on port 8000. It uses FastAPI (like 
 
 When one method fails, the app automatically tries the next one (fallback chain).
 
-### The Frontend (Next.js Kitchen)
+### The Frontend (Vite Kitchen)
 
-The frontend is a **React app** running on port 4028. It uses Next.js (a framework for React), TypeScript (JavaScript with safety training wheels), and Tailwind CSS (pre-made pretty styles).
+The frontend is a **React app** running on port 4028. It uses Vite (a build tool for React), TypeScript (JavaScript with safety training wheels), and Tailwind CSS (pre-made pretty styles).
 
 **Key files:**
 | File | What it does |
@@ -343,8 +343,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 **Terminal 2 — Frontend:**
 ```
-cd D:\PROJECTS\DEMANDD
-npm run dev    (uses Next.js on port 4028)
+cd D:\PROJECTS\DEMANDD\frontend
+npm run dev    (Vite on port 4028)
 ```
 
 Then open your browser to `http://localhost:4028`.
@@ -355,7 +355,7 @@ Then open your browser to `http://localhost:4028`.
 
 | Layer | Technology | What it's for |
 |---|---|---|
-| Frontend framework | Next.js 15 | React framework for the browser UI |
+| Frontend framework | React 19 + Vite | React app with Vite build tool for the browser UI |
 | UI language | TypeScript | JavaScript with type safety |
 | Styling | Tailwind CSS | Utility-first CSS framework |
 | Charts | Recharts | React charting library |

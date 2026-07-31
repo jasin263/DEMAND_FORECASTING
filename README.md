@@ -77,7 +77,6 @@ If you guess too **low** → you run out of stock and lose customers.
 │           ├── ConsensusPage.tsx         # NEW
 │           └── ...
 │
-└── (shared frontend at src/ for Next.js, kept in sync with Vite frontend/)
 ```
 
 ---
@@ -497,17 +496,11 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 # Server ready at http://localhost:8000
 ```
 
-### Frontend (Vite — primary)
+### Frontend (Vite)
 ```bash
 cd frontend
 npm install
 npm run dev    # starts on port 4028
-```
-
-### Frontend (Next.js — secondary)
-```bash
-npm install
-npm run dev    # starts on port 3000
 ```
 
 ### Verify it works
@@ -613,8 +606,7 @@ All endpoints are available under `/api/tenants/nestle-fmcg-demo/`.
 | **Backend** | Python 3.13 + FastAPI | Serves API on port 8000 |
 | **Forecasting** | Prophet, LightGBM, statsmodels | Real ML + statistical forecasting |
 | **Data** | Pandas, NumPy, PyArrow | Data processing and parquet caching |
-| **Frontend (primary)** | React 19 + Vite + TypeScript | UI on port 4028 |
-| **Frontend (secondary)** | Next.js 15 + React 19 | UI on port 3000 (mirrors Vite) |
+| **Frontend** | React 19 + Vite + TypeScript | UI on port 4028 |
 | **Charts** | Recharts | Interactive charts and graphs |
 | **Styling** | Tailwind CSS | Dark-themed UI |
 | **Icons** | Lucide React | SVG icons |
