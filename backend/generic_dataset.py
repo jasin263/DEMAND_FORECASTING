@@ -146,7 +146,9 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
     df = df.sort_values([entity_col, date_col]).reset_index(drop=True)
 
     # Build per-entity timeseries
-    df['week_key'] = df[date_col].dt.strftime('%Y-W%V')
+    # ISO week year (%G) keeps weeks intact across calendar-year boundaries;
+    # %Y-W%V would split e.g. Dec 28 2020 - Jan 3 2021 into two fake weeks.
+    df['week_key'] = df[date_col].dt.strftime('%G-W%V')
     week_keys = sorted(df['week_key'].unique())
 
     # Optional: limit how much history the pipeline uses (keeps the most recent N weeks)
@@ -173,15 +175,42 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
     skus = []
     sku_detail_map = {}
 
+    # Real price/promo columns when present in the uploaded file
+    lower_cols = {c: str(c).lower() for c in df.columns}
+    price_col = None
+    promo_col = None
+    for c, cl in lower_cols.items():
+        if price_col is None and any(k in cl for k in ('price', 'list_price', 'unit_price')):
+            price_col = c
+        if promo_col is None and any(k in cl for k in ('promo', 'is_promo', 'promotion')):
+            promo_col = c
+
     for idx, (entity, grp) in enumerate(df.groupby(entity_col), 1):
         grp = grp.sort_values(date_col)
-        weekly = grp.groupby('week_key', as_index=False)[target_col].sum()
+        agg_dict = {target_col: 'sum'}
+        if price_col is not None and price_col in grp.columns:
+            agg_dict[price_col] = 'mean'
+        weekly = grp.groupby('week_key', as_index=False).agg(agg_dict)
         weekly = weekly.sort_values('week_key')
         values = weekly[target_col].astype(float).tolist()
         if len(values) < 2:
             continue
         mean_val = float(np.mean(values))
         tail = values[-8:] if len(values) >= 8 else values
+
+        # Real price history (carried forward over missing weeks) + promo weeks
+        price_history = None
+        promotion_weeks = 0
+        if price_col is not None and price_col in weekly.columns:
+            price_history = []
+            last_price = None
+            for p in weekly[price_col].astype(float).tolist():
+                if p == p:
+                    last_price = p
+                price_history.append(float(last_price) if last_price is not None else None)
+            price_history = [p for p in price_history if p is not None] or None
+        if promo_col is not None and promo_col in grp.columns:
+            promotion_weeks = int(grp.groupby('week_key')[promo_col].max().gt(0).sum())
 
         # Real demand pattern + backtested accuracy instead of random stats
         from forecast_engine import detect_demand_pattern, backtest
@@ -210,10 +239,10 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
             "lastActual": float(values[-1]),
             "trend": [float(v) for v in tail],
             "fullTrend": [float(v) for v in values],
-            "sellPrice": None,
-            "priceHistory": None,
+            "sellPrice": float(price_history[-1]) if price_history else None,
+            "priceHistory": price_history,
             "events": None,
-            "promotionWeeks": 0,
+            "promotionWeeks": promotion_weeks,
         }
         skus.append(sku_entry)
         sku_detail_map[sku_entry['id']] = sku_entry
@@ -259,21 +288,37 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
     m5_data.LOCATIONS = ["Uploaded Dataset"]
     # Exceptions get the actual date of the anomalous week
     week_dates = {wk: ts.to_pydatetime() for wk, ts in df.groupby('week_key')[date_col].max().items()}
-    m5_data.EXCEPTIONS = _build_user_exceptions(skus, week_order=week_keys, week_dates=week_dates)
+    # Partial calendar weeks (e.g. ISO W53, or the tail of the file) carry fewer than
+    # 3 days of data and produce fake "demand drop" signals — exclude them.
+    week_day_counts = df.groupby('week_key')[date_col].nunique().to_dict()
+    m5_data.EXCEPTIONS = _build_user_exceptions(skus, week_order=week_keys, week_dates=week_dates,
+                                                week_day_counts=week_day_counts)
     m5_data.EXCEPTIONS_STORE = {e['id']: e for e in m5_data.EXCEPTIONS}
-    # Invalidate cached per-SKU forecasts/backtests since the underlying data changed
+    # Invalidate stale demo state — everything is recomputed from the uploaded data
     m5_data.FORECAST_CACHE.clear()
     m5_data.BACKTEST_CACHE.clear()
+    m5_data.KPI_SUMMARY = {}
+    m5_data.MODEL_METRICS = []
+    m5_data.MODEL_COMPARISON = []
+    m5_data.BACKTEST_RESULTS = {}
+    m5_data.ACCURACY_HISTORY = []
     m5_data._initialized = True
 
 
 def _build_user_exceptions(skus: list[dict], week_order: list | None = None,
-                           week_dates: dict | None = None, max_exceptions: int = 20) -> list[dict]:
+                           week_dates: dict | None = None, week_day_counts: dict | None = None,
+                           max_exceptions: int = 20) -> list[dict]:
     """Detect real exceptions from uploaded SKU demand series."""
     from datetime import datetime, timezone
 
     severity_order = {'high': 0, 'medium': 1, 'low': 2}
     candidates = []
+
+    def _is_partial_week(idx: int) -> bool:
+        """True when the week carries fewer than 3 days of data (calendar artifact)."""
+        if not week_day_counts or not week_order or not (0 <= idx < len(week_order)):
+            return False
+        return int(week_day_counts.get(week_order[idx], 0) or 0) < 3
 
     for sku in skus:
         values = sku.get('fullTrend') or sku.get('trend') or []
@@ -284,6 +329,8 @@ def _build_user_exceptions(skus: list[dict], week_order: list | None = None,
 
         # 1. Demand spike/drop: any week deviating strongly from its 8-week baseline
         for i in range(8, len(values)):
+            if _is_partial_week(i):
+                continue
             baseline = float(np.median(values[i - 8:i]))
             if baseline <= 0:
                 continue

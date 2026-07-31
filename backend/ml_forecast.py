@@ -121,6 +121,8 @@ def lightgbm_forecast(series: list[float], horizon: int = 12,
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=42,
+            deterministic=True,
+            force_col_wise=True,
             verbose=-1,
         )
         model.fit(X, y)
@@ -138,7 +140,7 @@ def lightgbm_forecast(series: list[float], horizon: int = 12,
             p50.append(round(float(pred), 1))
             extended.append(pred)
             if full_prices and full_prices:
-                full_prices.append(full_prices[-1] * (1 + np.random.uniform(-0.02, 0.02)))
+                full_prices.append(full_prices[-1])
             if full_events:
                 full_events.append([])
         
@@ -191,15 +193,21 @@ def prophet_forecast(series: list[float], horizon: int = 12,
         
         if prices is not None:
             last_price = prices[-1]
-            future['price'] = [last_price * (1 + np.random.uniform(-0.03, 0.03)) for _ in range(horizon)]
+            future['price'] = [last_price] * horizon
         if events is not None:
             future['has_event'] = [0] * horizon
         
         forecast = model.predict(future)
-        
+
+        # Deterministic prediction intervals: Prophet's yhat_upper/yhat_lower are
+        # drawn from 1000 random posterior samples and differ run-to-run; rebuild
+        # them from the residual spread of the deterministic point forecast instead.
+        in_sample = model.predict(df)['yhat']
+        resid = np.abs(np.asarray(series, dtype=float) - np.asarray(in_sample, dtype=float))
+        std_resid = float(np.std(resid)) if len(resid) > 1 else float(np.mean(series)) * 0.1
         p50 = [max(round(float(v), 1), 0) for v in forecast['yhat']]
-        p10 = [max(round(float(v - 1.28 * (forecast['yhat_upper'].iloc[i] - v)), 1), 0) for i, v in enumerate(forecast['yhat'])]
-        p90 = [round(float(v + 1.28 * (forecast['yhat_upper'].iloc[i] - v)), 1) for i, v in enumerate(forecast['yhat'])]
+        p10 = [max(round(float(v - 1.28 * std_resid), 1), 0) for v in p50]
+        p90 = [round(float(v + 1.28 * std_resid), 1) for v in p50]
         
         return {"p50": p50, "p10": p10, "p90": p90}
     except Exception:

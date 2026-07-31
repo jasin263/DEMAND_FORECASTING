@@ -49,7 +49,9 @@ async def get_consensus(
         pattern = fe.detect_demand_pattern(train.tolist())
         stat_fc = fe.forecast_for_pattern(train.tolist(), pattern, horizon)
         ml_fc = mlf.auto_ml_forecast(train.tolist(), horizon, preferred='lightgbm')
-        judgmental = [v * (1 + np.random.uniform(-0.08, 0.08)) for v in stat_fc['p50']]
+        # Judgmental channel: deterministic planner-style estimate (recent smoothed level)
+        judg_level = float(np.mean(train[-8:])) if len(train) >= 8 else float(np.mean(train))
+        judgmental = [judg_level] * horizon
         weights = GLOBAL_CONSENSUS_CONFIG
         if weights['adaptiveWeighting']:
             ml_mape_val = fe.calculate_mape(test.tolist(), ml_fc['p50'][:len(test)])

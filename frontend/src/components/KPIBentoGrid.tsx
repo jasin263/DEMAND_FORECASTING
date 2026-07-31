@@ -148,9 +148,9 @@ export default function KPIBentoGrid() {
           {metricSummary.forecastBias}<span className="text-base text-muted-foreground">%</span>
         </p>
         <div className="flex items-center gap-1 mt-1 text-accent text-xs">
-          <span>{metricSummary.forecastBias < 0 ? 'Over-forecasting' : 'Under-forecasting'}</span>
+          <span>{metricSummary.forecastBias < 0 ? 'Under-forecasting' : 'Over-forecasting'}</span>
         </div>
-        <p className="text-xs text-muted-foreground mt-1.5">{metricSummary.forecastBias < 0 ? 'Positive = stock surplus' : 'Negative = stock risk'}</p>
+        <p className="text-xs text-muted-foreground mt-1.5">{metricSummary.forecastBias < 0 ? 'Forecast below actual — stock risk' : 'Forecast above actual — stock surplus'}</p>
       </div>
 
       <div className="glass-card p-4">

@@ -43,13 +43,19 @@ async def get_demand_sensing(sku_limit: int = Query(20, ge=1, le=50)):
     return {"results": results, "globalConfig": GLOBAL_SENSING_CONFIG, "overallMape": overall}
 
 def _build_signals(arr, sku):
+    """Derive channel signals deterministically from the real demand series.
+
+    The uploaded dataset has no per-channel columns, so channel values are
+    estimated as fixed structural shares of the actual demand — fully
+    deterministic and reproducible, with no injected randomness.
+    """
     signals = []
     for i, v in enumerate(arr):
-        pos = v * (0.8 + np.random.uniform(-0.1, 0.1))
-        sell_in = v * (0.9 + np.random.uniform(-0.1, 0.1))
-        sell_out = v * (0.85 + np.random.uniform(-0.1, 0.1))
-        store = v * (0.3 + np.random.uniform(-0.1, 0.1))
-        warehouse = v * (0.5 + np.random.uniform(-0.1, 0.1))
+        pos = v * 0.95
+        sell_in = v * 0.90
+        sell_out = v * 0.88
+        store = v * 0.35
+        warehouse = v * 0.55
         signals.append({"date": f"w{i}", "pos": max(0, round(pos, 1)),
                         "sellIn": max(0, round(sell_in, 1)), "sellOut": max(0, round(sell_out, 1)),
                         "storeStock": max(0, round(store, 1)), "warehouseStock": max(0, round(warehouse, 1)),

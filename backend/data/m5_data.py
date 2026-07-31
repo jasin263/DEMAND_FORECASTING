@@ -139,8 +139,11 @@ def _precompute_forecasts(start_timer: float = 0):
                     "p90": last_p90,
                 })
         FORECAST_TIMESERIES = new_ts
-        actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
-        forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
+        # KPI must be computed on the out-of-sample window only — the train portion
+        # of the series is historical actuals (forecast == actual by construction),
+        # so including it would dilute WAPE/MAPE toward zero and overstate accuracy.
+        actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None][split:]
+        forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None][split:]
         kpi = fe.compute_kpi_metrics(actuals, forecasts)
 
         fc_horizon_actual = min(len(test), fc_horizon)

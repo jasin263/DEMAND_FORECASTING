@@ -205,7 +205,11 @@ def calculate_wape(actual: list[float], forecast: list[float]) -> float:
 def calculate_bias(actual: list[float], forecast: list[float]) -> float:
     arr_a = np.array(actual, dtype=float)
     arr_f = np.array(forecast[:len(actual)], dtype=float)
-    return round(float(np.mean(arr_f - arr_a)), 1)
+    mask = arr_a > 0
+    if not mask.any():
+        return round(float(np.mean(arr_f - arr_a)), 1)
+    pct = (arr_f[mask] - arr_a[mask]) / arr_a[mask] * 100
+    return round(float(np.mean(pct)), 1)
 
 def backtest(series: list[float], n_splits: int = 4, horizon: int = 8, force_naive: bool = False, seasonal: bool = False) -> dict:
     """Time-series cross-validation backtest."""
