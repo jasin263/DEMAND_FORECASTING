@@ -1,0 +1,38 @@
+# Node modules
+node_modules/
+package-lock.json
+!frontend/package-lock.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local datasets (Kaggle archives, large CSVs)
+dataset/
+
+# Build / tool caches
+.next/
+out/
+build/
+dist/
+.vite/
+.freebuff/
+.vscode/
+.idea/
+turbo/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / misc
+.DS_Store
+Thumbs.db
+.vercel/
+*.tsbuildinfo
+coverage/
+jest-test-results.json
