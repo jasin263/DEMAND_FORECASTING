@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useGenericDatasetProfile, useOnboarding, useSaveGenericDataset } from '../lib/api-hooks';
 import { Toaster, toast } from 'sonner';
-import { Check, ChevronRight, ChevronLeft, ArrowRight, Upload, FileSpreadsheet, Database, Loader2, Building2, Info, Scan } from 'lucide-react';
+import { Check, ChevronRight, ChevronLeft, ArrowRight, Upload, FileSpreadsheet, Database, Loader2, Building2, Info, Scan, History } from 'lucide-react';
 import AppLogo from '../components/ui/AppLogo';
 import type { OnboardingState, OnboardingConfig } from '../lib/api-types';
 
@@ -57,6 +57,7 @@ export default function OnboardingWizardPage() {
     industry: 'fmcg',
     uploadedFile: null,
     columnMappings: {},
+    dataLimitWeeks: null,
     config: defaultConfig,
   });
   const [dragOver, setDragOver] = useState(false);
@@ -88,6 +89,7 @@ export default function OnboardingWizardPage() {
       date_column: state.columnMappings.date || profileSuggestions.date_column || '',
       entity_column: state.columnMappings.sku || state.columnMappings.product_id || state.columnMappings.product || state.columnMappings.item || state.columnMappings.entity || profileSuggestions.entity_column || '',
       forecast_horizon: state.config.forecastHorizon,
+      data_limit_weeks: state.dataLimitWeeks || undefined,
     };
 
     setLaunchStatus('launching');
@@ -507,6 +509,44 @@ function Step2DataUpload({
             )}
           </div>
         )}
+
+        {Object.keys(profiledColumns).length > 0 && (
+          <div className="mt-5 rounded-xl border border-border p-4 text-left">
+            <div className="flex items-center gap-2">
+              <History size={15} className="text-primary" />
+              <p className="text-sm font-semibold text-foreground">How much data should the pipeline use?</p>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 mb-4">
+              Choose how much history to include in the forecast run. More history captures yearly seasonality but takes longer to compute; less history trains faster on recent trends.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { weeks: null, label: 'All data', detail: 'Full history' },
+                { weeks: 156, label: 'Last 3 years', detail: '156 weeks' },
+                { weeks: 104, label: 'Last 2 years', detail: '104 weeks' },
+                { weeks: 52, label: 'Last year', detail: '52 weeks' },
+              ].map((opt) => {
+                const selected = state.dataLimitWeeks === opt.weeks;
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    onClick={() => onUpdate({ dataLimitWeeks: opt.weeks })}
+                    className={`rounded-xl border p-3 text-left transition-colors ${
+                      selected ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-foreground">{opt.label}</p>
+                      {selected && <Check size={14} className="text-primary" />}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">{opt.detail}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-between">
@@ -665,7 +705,8 @@ function Step4ConfigConfirm({
               {state.uploadedFile ? state.uploadedFile.name : 'No file uploaded'}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {Object.keys(state.columnMappings).length} column mappings configured
+              {Object.keys(state.columnMappings).length} column mappings configured ·{' '}
+              {state.dataLimitWeeks ? `Last ${state.dataLimitWeeks} weeks of history` : 'All data (full history)'}
             </p>
           </div>
 

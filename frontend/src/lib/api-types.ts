@@ -160,6 +160,7 @@ export interface OnboardingState {
   industry: 'fmcg' | 'auto' | 'pharma' | 'custom';
   uploadedFile: File | null;
   columnMappings: Record<string, string>;
+  dataLimitWeeks: number | null;
   config: {
     forecastHorizon: number;
     granularity: 'daily' | 'weekly' | 'monthly';

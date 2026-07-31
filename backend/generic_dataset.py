@@ -149,6 +149,18 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
     df['week_key'] = df[date_col].dt.strftime('%Y-W%V')
     week_keys = sorted(df['week_key'].unique())
 
+    # Optional: limit how much history the pipeline uses (keeps the most recent N weeks)
+    data_limit_weeks = mapping.get('data_limit_weeks')
+    if data_limit_weeks:
+        try:
+            data_limit_weeks = int(data_limit_weeks)
+        except (TypeError, ValueError):
+            data_limit_weeks = 0
+        if data_limit_weeks > 0 and len(week_keys) > data_limit_weeks:
+            keep = set(week_keys[-data_limit_weeks:])
+            df = df[df['week_key'].isin(keep)].copy()
+            week_keys = sorted(keep)
+
     week_labels = {}
     for wk in week_keys:
         try:
