@@ -9,16 +9,16 @@ T = TypeVar('T')
 # --- KPI & Dashboard ---
 class KPISummary(BaseModel):
     wape: float
-    wapeDelta: float
+    wapeDelta: Optional[float] = None
     mape: float
-    mapeDelta: float
+    mapeDelta: Optional[float] = None
     totalForecastedDemand: float
-    totalForecastedDemandDelta: float
+    totalForecastedDemandDelta: Optional[float] = None
     exceptionSkus: int
-    exceptionSkusDelta: int
+    exceptionSkusDelta: Optional[int] = None
     forecastBias: float
     serviceLevel: float
-    serviceLevelDelta: float
+    serviceLevelDelta: Optional[float] = None
 
 
 class ForecastDataPoint(BaseModel):
@@ -201,6 +201,7 @@ class AppConfig(BaseModel):
     # Output & Alerting
     accuracyMetric: AccuracyMetric = 'wape'
     exceptionThreshold: int = 25
+    wapeTarget: float = 15.0
     reorderFormula: ReorderFormula = 'dynamic'
     notificationChannel: NotificationChannel = 'email'
     notificationEmail: str = 'anika.patel@nestle-india.com'
@@ -241,7 +242,7 @@ class ModelMetric(BaseModel):
     label: str
     value: str
     delta: str
-    trend: Literal['positive', 'negative']
+    trend: Literal['positive', 'negative', 'neutral']
 
 
 class SKUForecast(BaseModel):

@@ -1,15 +1,15 @@
 export interface KPISummary {
   wape: number;
-  wapeDelta: number;
+  wapeDelta: number | null;
   mape: number;
-  mapeDelta: number;
+  mapeDelta: number | null;
   totalForecastedDemand: number;
-  totalForecastedDemandDelta: number;
+  totalForecastedDemandDelta: number | null;
   exceptionSkus: number;
-  exceptionSkusDelta: number;
+  exceptionSkusDelta: number | null;
   forecastBias: number;
   serviceLevel: number;
-  serviceLevelDelta: number;
+  serviceLevelDelta: number | null;
 }
 
 export interface ForecastDataPoint {
@@ -142,6 +142,7 @@ export interface AppConfig {
   hierarchicalReconciliation: HierarchicalReconciliation;
   accuracyMetric: AccuracyMetric;
   exceptionThreshold: number;
+  wapeTarget: number;
   reorderFormula: ReorderFormula;
   notificationChannel: NotificationChannel;
   notificationEmail: string;

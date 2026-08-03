@@ -60,6 +60,7 @@ _CONFIG_DEFAULTS = {
     'seasonalityMode': 'auto',
     'backtestingWindow': 8,
     'exceptionThreshold': 25,
+    'wapeTarget': 15.0,
     'serviceLevelTarget': 97.5,
     'defaultLeadTime': 14,
     'predictionIntervals': True,
@@ -192,8 +193,6 @@ def _precompute_forecasts(start_timer: float = 0):
         # Main model: ML forecast driven by the configuration panel
         fc_result = mlf.auto_ml_forecast(train, fc_horizon, preferred=preferred,
                                          seasonality_mode=cfg.get('seasonalityMode', 'auto'))
-        # Baseline: Naive
-        naive_result = fe.naive_forecast(train, fc_horizon)
 
         new_ts = []
         for i, wk in enumerate(train_weeks):
@@ -225,35 +224,34 @@ def _precompute_forecasts(start_timer: float = 0):
         actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None][split:]
         forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None][split:]
         kpi = fe.compute_kpi_metrics(actuals, forecasts)
-
-        fc_horizon_actual = min(len(test), fc_horizon)
-        naive_kpi = fe.compute_kpi_metrics(test[:fc_horizon_actual], naive_result['p50'][:fc_horizon_actual])
     else:
         actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
         forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
         kpi = fe.compute_kpi_metrics(actuals, forecasts)
-        naive_kpi = {}
 
     kpi_wape = kpi.get('wape', 0)
     kpi_mape = kpi.get('mape', 0)
     kpi_bias = kpi.get('forecastBias', 0)
     kpi_service = kpi.get('serviceLevel', 0)
-    kpi_exceptions = kpi.get('exceptionSkus', 0)
     kpi_demand = kpi.get('totalForecastedDemand', 0)
+    kpi_exceptions = len(EXCEPTIONS)
 
-    nw = naive_kpi.get('wape', kpi_wape)
-    nm = naive_kpi.get('mape', kpi_mape)
-    nb = naive_kpi.get('forecastBias', 0)
-    ns = naive_kpi.get('serviceLevel', kpi_service)
-    ne = naive_kpi.get('exceptionSkus', kpi_exceptions)
-    nd = naive_kpi.get('totalForecastedDemand', kpi_demand)
-
-    wape_delta = round(kpi_wape - nw, 1)
-    mape_delta = round(kpi_mape - nm, 1)
-    bias_delta = round(abs(kpi_bias) - abs(nb), 1)
-    service_delta = round(kpi_service - ns, 1)
-    exception_delta = round(kpi_exceptions - ne, 1)
-    demand_delta = round(kpi_demand - nd, -1) if abs(kpi_demand - nd) > 100 else 0
+    # Deltas compare against the previous run of the SAME dataset. When the
+    # dataset changed (SKU count differs) or there is no prior snapshot, the
+    # comparison is not meaningful and is omitted (null).
+    prev = ACCURACY_HISTORY[-1] if ACCURACY_HISTORY else None
+    same_run = prev is not None and prev.get('skuCount') == N_SKUS
+    if same_run:
+        wape_delta = round(kpi_wape - prev['wape'], 1)
+        mape_delta = round(kpi_mape - prev['mape'], 1)
+        bias_delta = round(abs(kpi_bias) - abs(prev.get('bias', 0)), 1)
+        service_delta = round(kpi_service - prev.get('serviceLevel', 0), 1)
+        exception_delta = kpi_exceptions - prev.get('exceptionSkus', kpi_exceptions)
+        demand_delta = round(kpi_demand - prev.get('totalForecastedDemand', kpi_demand), -1)
+        if abs(demand_delta) < 100:
+            demand_delta = 0
+    else:
+        wape_delta = mape_delta = bias_delta = service_delta = exception_delta = demand_delta = None
 
     # Get all SKU sales for model comparison
     series_list = [sku.get('fullTrend', sku['trend']) for sku in SKUS]
@@ -264,8 +262,6 @@ def _precompute_forecasts(start_timer: float = 0):
 
     # Compute backtest on up to 100 SKUs for performance
     bt_mapes = []
-    bt_wapes = []
-    bt_naive_mapes = []
     bt_results_list = []
     n_bt = min(len(SKUS), 100)
     logger.info("Running backtest on %d SKUs...", n_bt)
@@ -277,7 +273,6 @@ def _precompute_forecasts(start_timer: float = 0):
             bt = fe.backtest(series, n_splits=3, horizon=bt_horizon)
             if bt['mape'] > 0:
                 bt_mapes.append(bt['mape'])
-                bt_wapes.append(bt['wape'])
                 bt_results_list.append({
                     "model": sku['model'],
                     "mape": bt['mape'],
@@ -285,14 +280,12 @@ def _precompute_forecasts(start_timer: float = 0):
                     "bias": bt['bias'],
                     "coverage": round(100 - bt['mape'], 1),
                 })
-            bt_naive = fe.backtest(series, n_splits=3, horizon=bt_horizon, force_naive=True)
-            if bt_naive['mape'] > 0:
-                bt_naive_mapes.append(bt_naive['mape'])
 
     avg_bt_mape = float(np.mean(bt_mapes)) if bt_mapes else 0
-    avg_bt_wape = float(np.mean(bt_wapes)) if bt_wapes else 0
-    avg_bt_naive_mape = float(np.mean(bt_naive_mapes)) if bt_naive_mapes else avg_bt_mape
-    bt_mape_delta = round(avg_bt_mape - avg_bt_naive_mape, 1)
+    if same_run:
+        bt_mape_delta = round(avg_bt_mape - prev.get('btMape', avg_bt_mape), 1)
+    else:
+        bt_mape_delta = None
 
     elapsed = time.time() - t_start
     duration_min = int(elapsed // 60)
@@ -315,26 +308,32 @@ def _precompute_forecasts(start_timer: float = 0):
         "serviceLevelDelta": service_delta,
     }
 
-    delta_formatted = lambda d, suffix="%", invert_good=False: (
-        f"+{d}{suffix}" if d > 0 else f"{d}{suffix}"
-    )
-    trend_from = lambda d, lower_is_better=True: (
-        "positive" if (d < 0 and lower_is_better) or (d > 0 and not lower_is_better) else "negative"
-    )
+    def delta_formatted(d, suffix="%"):
+        if d is None:
+            return "—"
+        return f"+{d}{suffix}" if d > 0 else f"{d}{suffix}"
+
+    def neg(d):
+        return -d if d is not None else None
+
+    def trend_from(d, lower_is_better=True):
+        if d is None or d == 0:
+            return "neutral"
+        return "positive" if (d < 0 and lower_is_better) or (d > 0 and not lower_is_better) else "negative"
 
     MODEL_METRICS = [
         {"label": "Forecast Accuracy (WAPE)", "value": f"{max(0, 100 - kpi_wape):.1f}%",
-         "delta": delta_formatted(-wape_delta), "trend": trend_from(wape_delta)},
+         "delta": delta_formatted(neg(wape_delta)), "trend": trend_from(wape_delta)},
         {"label": "Bias Error", "value": f"{abs(kpi_bias):.1f}%",
-         "delta": delta_formatted(-bias_delta), "trend": trend_from(bias_delta)},
+         "delta": delta_formatted(neg(bias_delta)), "trend": trend_from(bias_delta)},
         {"label": "Service Level Coverage", "value": f"{kpi_service:.1f}%",
          "delta": delta_formatted(service_delta), "trend": trend_from(service_delta, lower_is_better=False)},
         {"label": "Exception Rate", "value": f"{exception_rate:.1f}%",
-         "delta": delta_formatted(-exception_delta), "trend": trend_from(exception_delta)},
+         "delta": delta_formatted(neg(exception_delta)), "trend": trend_from(exception_delta)},
         {"label": "Avg. Backtest MAPE", "value": f"{avg_bt_mape:.1f}%",
          "delta": delta_formatted(bt_mape_delta), "trend": trend_from(bt_mape_delta)},
         {"label": "Model Retrain Duration", "value": duration_str,
-         "delta": f"-{max(int(elapsed - 60), 0)} sec", "trend": "positive"},
+         "delta": "—", "trend": "neutral"},
     ]
 
     MODEL_COMPARISON = model_comp if model_comp else [
@@ -351,7 +350,8 @@ def _precompute_forecasts(start_timer: float = 0):
         "results": bt_results_list[:5],
     }
 
-    # Accuracy history snapshot for drift monitoring
+    # Accuracy history snapshot for drift monitoring — also carries the
+    # metrics the KPI deltas compare against on the next run.
     ACCURACY_HISTORY.append({
         "date": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         "wape": kpi_wape,
@@ -359,6 +359,9 @@ def _precompute_forecasts(start_timer: float = 0):
         "bias": kpi_bias,
         "serviceLevel": kpi_service,
         "skuCount": N_SKUS,
+        "exceptionSkus": kpi_exceptions,
+        "totalForecastedDemand": kpi_demand,
+        "btMape": avg_bt_mape,
     })
     # Keep last 52 snapshots
     if len(ACCURACY_HISTORY) > 52:

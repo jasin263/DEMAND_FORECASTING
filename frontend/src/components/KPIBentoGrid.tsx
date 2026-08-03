@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { TrendingDown, TrendingUp, AlertTriangle, Package, Activity, Target, Loader2 } from 'lucide-react';
-import { useKPISummary, useBacktestResults } from '../lib/api-hooks';
+import { useKPISummary, useBacktestResults, useConfiguration } from '../lib/api-hooks';
 import { buildWorkspaceKpiSummary, readWorkspaceForecastRun } from '../lib/workspace-forecast';
 
 function formatNumber(n: number) {
@@ -9,12 +9,47 @@ function formatNumber(n: number) {
   return n.toString();
 }
 
+function Delta({
+  value,
+  suffix = 'pp',
+  label = 'vs last run',
+  lowerIsBetter = true,
+  units = false,
+}: {
+  value: number | null | undefined;
+  suffix?: string;
+  label?: string;
+  lowerIsBetter?: boolean;
+  units?: boolean;
+}) {
+  if (value == null) {
+    return <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground"><span>— vs last run</span></div>;
+  }
+  const isGood = value === 0 ? false : lowerIsBetter ? value < 0 : value > 0;
+  const cls = value === 0 ? 'text-muted-foreground' : isGood ? 'text-positive' : 'text-negative';
+  const Icon = value > 0 ? TrendingUp : value < 0 ? TrendingDown : null;
+  const display = units
+    ? `${value > 0 ? '+' : ''}${formatNumber(value)} units`
+    : `${value > 0 ? '+' : ''}${value}${suffix}`;
+  return (
+    <div className={`flex items-center gap-1 mt-1 text-xs ${cls}`}>
+      {Icon && <Icon size={12} />}
+      <span>{display} {label}</span>
+    </div>
+  );
+}
+
 export default function KPIBentoGrid() {
   const { data: kpi, loading, error } = useKPISummary();
   const { data: backtest } = useBacktestResults();
+  const { data: config } = useConfiguration();
   const [workspaceContext, setWorkspaceContext] = useState<{ workspaceName: string; fileName?: string; mapping?: Record<string, unknown> } | null>(null);
   const [workspaceKpi, setWorkspaceKpi] = useState<ReturnType<typeof buildWorkspaceKpiSummary>>(null);
   const currentRun = backtest?.lastRun ? new Date(backtest.lastRun).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+
+  const wapeTarget = config?.wapeTarget ?? 15;
+  const serviceTarget = config?.serviceLevelTarget ?? 97.5;
+  const excThreshold = config?.exceptionThreshold ?? 25;
 
   useEffect(() => {
     const run = readWorkspaceForecastRun();
@@ -58,6 +93,9 @@ export default function KPIBentoGrid() {
     );
   }
 
+  const wapeStatus = metricSummary.wape < wapeTarget ? 'Good' : metricSummary.wape < wapeTarget + 5 ? 'Fair' : 'Needs attention';
+  const wapeStatusCls = metricSummary.wape < wapeTarget ? 'text-positive' : metricSummary.wape < wapeTarget + 5 ? 'text-warning' : 'text-negative';
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-4">
       <div className="col-span-2 md:col-span-1 xl:col-span-2 2xl:col-span-2 glass-card p-5 relative overflow-hidden">
@@ -76,21 +114,16 @@ export default function KPIBentoGrid() {
             {metricSummary.wape}
             <span className="text-xl text-muted-foreground">%</span>
           </span>
-          <div className={`flex items-center gap-1 mb-1 text-xs font-medium ${metricSummary.wapeDelta < 0 ? 'text-positive' : 'text-negative'}`}>
-            {metricSummary.wapeDelta < 0 ? <TrendingDown size={14} /> : <TrendingUp size={14} />}
-            <span>{Math.abs(metricSummary.wapeDelta)}pp vs last run</span>
-          </div>
+          <Delta value={metricSummary.wapeDelta} />
         </div>
         <div className="mt-2 flex items-center gap-2">
           <div className="flex-1 bg-muted rounded-full h-1.5">
             <div className="h-1.5 rounded-full bg-positive" style={{ width: `${Math.min(100, 100 - metricSummary.wape * 2)}%` }} />
           </div>
-          <span className={`text-xs font-medium ${metricSummary.wape < 12 ? 'text-positive' : 'text-warning'}`}>
-            {metricSummary.wape < 12 ? 'Good' : metricSummary.wape < 18 ? 'Fair' : 'Needs attention'}
-          </span>
+          <span className={`text-xs font-medium ${wapeStatusCls}`}>{wapeStatus}</span>
         </div>
         <p className="text-xs text-muted-foreground mt-1.5">
-          {workspaceContext?.fileName ? `Source: ${workspaceContext.fileName}` : 'Source: uploaded dataset'} · Target: {'<'}15% · Current run: {currentRun}
+          {workspaceContext?.fileName ? `Source: ${workspaceContext.fileName}` : 'Source: uploaded dataset'} · Target: {'<'}{wapeTarget}% · Current run: {currentRun}
         </p>
       </div>
 
@@ -102,10 +135,7 @@ export default function KPIBentoGrid() {
         <p className="text-2xl font-bold font-tabular text-foreground">
           {metricSummary.mape}<span className="text-base text-muted-foreground">%</span>
         </p>
-        <div className={`flex items-center gap-1 mt-1 text-xs ${metricSummary.mapeDelta > 0 ? 'text-negative' : 'text-positive'}`}>
-          {metricSummary.mapeDelta > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-          <span>{metricSummary.mapeDelta > 0 ? '+' : ''}{metricSummary.mapeDelta}pp vs last run</span>
-        </div>
+        <Delta value={metricSummary.mapeDelta} />
         <p className="text-xs text-muted-foreground mt-1.5">Per-SKU mean</p>
       </div>
 
@@ -117,10 +147,7 @@ export default function KPIBentoGrid() {
         <p className="text-2xl font-bold font-tabular text-foreground">
           {formatNumber(metricSummary.totalForecastedDemand)}
         </p>
-        <div className="flex items-center gap-1 mt-1 text-positive text-xs">
-          <TrendingUp size={12} />
-          <span>+{metricSummary.totalForecastedDemandDelta}% vs prior period</span>
-        </div>
+        <Delta value={metricSummary.totalForecastedDemandDelta} units label="vs prior run" lowerIsBetter={false} />
         <p className="text-xs text-muted-foreground mt-1.5">Units across all SKUs</p>
       </div>
 
@@ -132,11 +159,8 @@ export default function KPIBentoGrid() {
         <p className="text-2xl font-bold font-tabular text-warning">
           {metricSummary.exceptionSkus}
         </p>
-        <div className="flex items-center gap-1 mt-1 text-warning text-xs">
-          <TrendingUp size={12} />
-          <span>+{metricSummary.exceptionSkusDelta} new this run</span>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1.5">MAPE {'>'} 25% threshold</p>
+        <Delta value={metricSummary.exceptionSkusDelta} suffix="" />
+        <p className="text-xs text-muted-foreground mt-1.5">MAPE {'>'}{excThreshold}% threshold</p>
       </div>
 
       <div className="glass-card p-4">
@@ -161,11 +185,8 @@ export default function KPIBentoGrid() {
         <p className="text-2xl font-bold font-tabular text-foreground">
           {metricSummary.serviceLevel}<span className="text-base text-muted-foreground">%</span>
         </p>
-        <div className="flex items-center gap-1 mt-1 text-positive text-xs">
-          <TrendingUp size={12} />
-          <span>+{metricSummary.serviceLevelDelta}pp vs last week</span>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1.5">Target: 97.5%</p>
+        <Delta value={metricSummary.serviceLevelDelta} lowerIsBetter={false} />
+        <p className="text-xs text-muted-foreground mt-1.5">Target: {serviceTarget}%</p>
       </div>
     </div>
   );

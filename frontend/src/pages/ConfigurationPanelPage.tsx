@@ -72,6 +72,7 @@ const defaultConfig: AppConfig = {
   hierarchicalReconciliation: 'bottom-up',
   accuracyMetric: 'wape',
   exceptionThreshold: 25,
+  wapeTarget: 15,
   reorderFormula: 'dynamic',
   notificationChannel: 'email',
   notificationEmail: 'anika.patel@nestle-india.com',

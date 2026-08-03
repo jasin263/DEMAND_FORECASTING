@@ -17,7 +17,10 @@ export default function ModelAnalyticsPage() {
   const { data: drift, loading: driftLoading } = useAccuracyDrift();
   const metrics = analytics?.metrics ?? [];
   const comparison = analytics?.comparison ?? [];
-  const bestModel = comparison[0];
+  const bestIndex = comparison.length
+    ? comparison.reduce((best, m, i, arr) => (m.accuracy > arr[best].accuracy ? i : best), 0)
+    : -1;
+  const bestModel = bestIndex >= 0 ? comparison[bestIndex] : undefined;
 
   const handleRefresh = async () => {
     await Promise.all([refetchAnalytics(), refetchBacktest()]);
@@ -68,7 +71,7 @@ export default function ModelAnalyticsPage() {
                 </div>
                 <p className="mt-1 text-2xl font-semibold text-foreground font-tabular">{m.value}</p>
                 <span className={`text-xs font-medium ${m.trend === 'positive' ? 'text-positive' : m.trend === 'negative' ? 'text-negative' : 'text-muted-foreground'}`}>
-                  {m.delta} vs last run
+                  {m.delta}{m.delta === '—' ? '' : ' vs last run'}
                 </span>
               </div>
             ))}
@@ -141,11 +144,11 @@ export default function ModelAnalyticsPage() {
                   </thead>
                   <tbody>
                     {comparison.map((m, i) => (
-                      <tr key={m.name} className={`border-b border-border/50 transition-colors hover:bg-muted/20 ${i === 0 ? 'bg-primary/5' : ''}`}>
+                      <tr key={m.name} className={`border-b border-border/50 transition-colors hover:bg-muted/20 ${i === bestIndex ? 'bg-primary/5' : ''}`}>
                         <td className="px-4 py-3">
                           <span className="font-medium flex items-center gap-2">
                             {m.name}
-                            {i === 0 && <span className="rounded-full bg-positive/10 px-2 py-0.5 text-xs font-medium text-positive">Best</span>}
+                            {i === bestIndex && <span className="rounded-full bg-positive/10 px-2 py-0.5 text-xs font-medium text-positive">Best</span>}
                           </span>
                         </td>
                         <td className="px-4 py-3"><span className="font-tabular">{m.accuracy}%</span></td>
