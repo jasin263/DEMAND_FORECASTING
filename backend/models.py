@@ -24,9 +24,9 @@ class KPISummary(BaseModel):
 class ForecastDataPoint(BaseModel):
     week: str
     actual: Optional[float] = None
-    p50: float
-    p10: float
-    p90: float
+    p50: Optional[float] = None
+    p10: Optional[float] = None
+    p90: Optional[float] = None
 
 
 class AccuracyByCategory(BaseModel):

@@ -214,10 +214,19 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
         if promo_col is not None and promo_col in grp.columns:
             promotion_weeks = int(grp.groupby('week_key')[promo_col].max().gt(0).sum())
 
-        # Real demand pattern + backtested accuracy instead of random stats
-        from forecast_engine import detect_demand_pattern, backtest
+        # Real demand pattern + backtested accuracy from the actual model
+        # (not the naive baseline, not random placeholders)
+        from forecast_engine import (detect_demand_pattern, backtest,
+                                     forecast_for_pattern, compute_inventory_stats)
         pattern = detect_demand_pattern(values)
-        bt = backtest(values, n_splits=3, horizon=8, force_naive=True, seasonal=(pattern == 'Seasonal'))
+        bt = backtest(values, n_splits=4, horizon=8)
+        p50_next = forecast_for_pattern(values, pattern, 12)['p50'][0]
+        cfg = m5_data.get_app_config()
+        inv = compute_inventory_stats(values,
+                                      lead_time_days=cfg.get('defaultLeadTime', 14),
+                                      service_level_target=cfg.get('serviceLevelTarget', 97.5),
+                                      sell_price=price_history[-1] if price_history else None,
+                                      moq=cfg.get('moq', 0))
         model_name = {
             'Seasonal': 'Holt-Winters',
             'Intermittent': 'Croston',
@@ -233,9 +242,9 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
             "location": "Uploaded Dataset",
             "mape": bt['mape'],
             "bias": bt['bias'],
-            "p50Forecast": float(np.percentile(values, 50)),
-            "reorderQty": float(max(mean_val / 4, 10)),
-            "safetyStock": float(max(mean_val / 10, 5)),
+            "p50Forecast": round(float(p50_next), 1),
+            "reorderQty": inv['reorderQty'],
+            "safetyStock": inv['safetyStock'],
             "model": model_name,
             "pattern": pattern,
             "lastActual": float(values[-1]),
@@ -256,9 +265,9 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
         forecast_timeseries.append({
             "week": week_labels.get(wk, wk),
             "actual": total,
-            "p50": total,
-            "p10": total * 0.92,
-            "p90": total * 1.08,
+            "p50": None,
+            "p10": None,
+            "p90": None,
         })
 
     # Snapshot dataset structure for the maturity assessment modules

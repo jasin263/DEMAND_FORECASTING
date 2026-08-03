@@ -4,6 +4,7 @@ Trains on actual M5 timeseries data using real statistical models.
 """
 import warnings
 import numpy as np
+from math import sqrt, erf, pi, exp
 from typing import Optional
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.arima.model import ARIMA
@@ -115,12 +116,19 @@ def exponential_smoothing_forecast(series: list[float], horizon: int = 12) -> di
         # 'heuristic' initialization is ~10-50x faster than 'estimated' with
         # near-identical accuracy — important since this runs per-fold in backtests.
         model = ExponentialSmoothing(
-            arr, trend='add', seasonal=None
-        ).fit(initialization_method='heuristic')
+            arr, trend='add', seasonal=None, initialization_method='heuristic'
+        ).fit()
         forecast = model.forecast(horizon)
         residuals = model.resid
         std_resid = float(np.std(residuals)) if len(residuals) > 1 else float(np.mean(np.abs(arr))) * 0.1
         p50 = [max(float(v), 0) for v in forecast]
+        # Degenerate fit (flat forecast): keep the seasonal wave instead of a
+        # constant level — seasonal naive for seasonal-length series
+        spread = max(p50) - min(p50)
+        if spread <= max(1.0, float(np.mean(p50)) * 0.01):
+            if n >= 52:
+                return seasonal_naive_forecast(series, horizon)
+            return naive_forecast(series, horizon)
         # Intervals fan out with horizon, matching real forecast uncertainty growth
         p10 = [max(float(v - 1.28 * std_resid * (1 + 0.07 * i)), 0) for i, v in enumerate(p50)]
         p90 = [float(v + 1.28 * std_resid * (1 + 0.07 * i)) for i, v in enumerate(p50)]
@@ -136,12 +144,18 @@ def holt_winters_forecast(series: list[float], horizon: int = 12, season_period:
         return exponential_smoothing_forecast(series, horizon)
     try:
         model = ExponentialSmoothing(
-            arr, trend='add', seasonal='add', seasonal_periods=min(season_period, n // 2)
-        ).fit(initialization_method='heuristic')
+            arr, trend='add', seasonal='add', seasonal_periods=min(season_period, n // 2),
+            initialization_method='heuristic'
+        ).fit()
         forecast = model.forecast(horizon)
+        p50 = [max(float(v), 0) for v in forecast]
+        # Degenerate fit (flat forecast): fall back to seasonal naive so the
+        # forecast keeps the seasonal wave instead of a constant level
+        spread = max(p50) - min(p50)
+        if spread <= max(1.0, float(np.mean(p50)) * 0.01):
+            return seasonal_naive_forecast(series, horizon)
         residuals = model.resid
         std_resid = float(np.std(residuals)) if len(residuals) > 1 else float(np.mean(np.abs(arr))) * 0.1
-        p50 = [max(float(v), 0) for v in forecast]
         # Intervals fan out with horizon, matching real forecast uncertainty growth
         p10 = [max(float(v - 1.28 * std_resid * (1 + 0.07 * i)), 0) for i, v in enumerate(p50)]
         p90 = [float(v + 1.28 * std_resid * (1 + 0.07 * i)) for i, v in enumerate(p50)]
@@ -344,3 +358,52 @@ def compute_model_comparison(series_list: list[list[float]], horizon: int = 12) 
                 "speed": "Fast",
             })
     return results
+
+
+def _erfinv(x):
+    t = x
+    for _ in range(5):
+        t = t - (erf(t) - x) / (2 / sqrt(pi) * exp(-t * t))
+    return t * 0.9
+
+
+def compute_inventory_stats(series: list[float], lead_time_days: int = 14,
+                            service_level_target: float = 97.5,
+                            sell_price: float | None = None, moq: float = 0,
+                            holding_cost_pct: float = 0.25, order_cost: float = 50) -> dict:
+    """Safety stock + reorder point from real demand statistics.
+
+    Same math as the inventory optimization endpoint: safety stock uses the
+    normal quantile z x sqrt(lead-time demand variance + lead-time variance),
+    reorder point = lead-time demand + safety stock (MOQ floor applied).
+    """
+    arr = _safe_series(series)
+    if len(arr) < 8:
+        return {"reorderQty": 0.0, "safetyStock": 0.0}
+    avg_daily = float(np.mean(arr)) / 7.0
+    demand_std = float(np.std(arr)) / sqrt(7.0)
+    sl = min(max(service_level_target / 100.0, 0.8), 0.999)
+    z = sqrt(2) * _erfinv(2 * sl - 1)
+    lt = max(int(lead_time_days), 1)
+    lt_std = lt * 0.2
+    safety = z * sqrt(lt * demand_std ** 2 + avg_daily ** 2 * lt_std ** 2)
+    reorder = avg_daily * lt + safety
+    if moq and reorder < moq:
+        reorder = float(moq)
+    return {"reorderQty": round(float(reorder), 1), "safetyStock": round(float(safety), 1)}
+
+
+def quick_holdout_stats(series: list[float], horizon: int = 8) -> dict:
+    """Real out-of-sample MAPE/bias from a cheap seasonal-naive holdout.
+
+    Used by the demo loader where full model backtests across thousands of
+    SKUs would be too slow. Returns {mape, bias}.
+    """
+    arr = _safe_series(series)
+    n = len(arr)
+    if n < horizon + 4:
+        return {"mape": 0.0, "bias": 0.0}
+    train = arr[:-horizon]
+    fc = seasonal_naive_forecast(train.tolist(), horizon)
+    return {"mape": calculate_mape(arr[-horizon:].tolist(), fc['p50']),
+            "bias": calculate_bias(arr[-horizon:].tolist(), fc['p50'])}

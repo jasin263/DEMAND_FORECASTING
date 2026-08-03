@@ -226,17 +226,30 @@ def _build_data_structures(weekly: pd.DataFrame, calendar: pd.DataFrame) -> dict
         model_map = {"Smooth": "ETS", "Seasonal": "SARIMA", "Intermittent": "Croston", "Erratic": "Moving Avg"}
         model = model_map.get(pattern, "ETS")
         
+        # Real out-of-sample accuracy (seasonal-naive holdout) instead of
+        # random stats; cheap enough to run for thousands of demo SKUs
+        from forecast_engine import quick_holdout_stats, seasonal_naive_forecast, compute_inventory_stats
+        hstats = quick_holdout_stats(sales_series.tolist())
+        p50_next = seasonal_naive_forecast(sales_series.tolist(), 1)['p50'][0]
+        from data import m5_data as _m5_data
+        _cfg = _m5_data.get_app_config()
+        _inv = compute_inventory_stats(sales_series.tolist(),
+                                       lead_time_days=_cfg.get('defaultLeadTime', 14),
+                                       service_level_target=_cfg.get('serviceLevelTarget', 97.5),
+                                       sell_price=price_series[-1] if price_series is not None and len(price_series) > 0 else None,
+                                       moq=_cfg.get('moq', 0))
+
         sku_entry = {
             "id": f"sku-{sku_idx:03d}",
             "skuId": row['id'].replace('_validation', '').replace('_evaluation', ''),
             "name": f"{row['item_id']} @ {store}",
             "category": cat,
             "location": location,
-            "mape": round(float(np.random.uniform(5, 35)), 1),
-            "bias": round(float(np.random.uniform(-6, 6)), 1),
-            "p50Forecast": float(np.percentile(sales_series, 50)),
-            "reorderQty": float(max(mean_sales / 4, 10)),
-            "safetyStock": float(max(mean_sales / 10, 5)),
+            "mape": hstats['mape'],
+            "bias": hstats['bias'],
+            "p50Forecast": round(float(p50_next), 1),
+            "reorderQty": _inv['reorderQty'],
+            "safetyStock": _inv['safetyStock'],
             "model": model,
             "pattern": pattern,
             "lastActual": float(sales_series[-1]) if len(sales_series) > 0 else 0,
@@ -273,9 +286,9 @@ def _build_data_structures(weekly: pd.DataFrame, calendar: pd.DataFrame) -> dict
         forecast_timeseries.append({
             "week": week_labels[wk],
             "actual": total,
-            "p50": total,
-            "p10": total * 0.92,
-            "p90": total * 1.08,
+            "p50": None,
+            "p10": None,
+            "p90": None,
         })
     
     # Exceptions from volatile SKUs

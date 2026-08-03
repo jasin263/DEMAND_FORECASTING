@@ -15,9 +15,9 @@ export interface KPISummary {
 export interface ForecastDataPoint {
   week: string;
   actual: number | null;
-  p50: number;
-  p10: number;
-  p90: number;
+  p50: number | null;
+  p10: number | null;
+  p90: number | null;
 }
 
 export interface AccuracyByCategory {

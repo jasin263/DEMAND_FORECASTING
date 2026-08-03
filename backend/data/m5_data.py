@@ -184,46 +184,44 @@ def _precompute_forecasts(start_timer: float = 0):
         split = int(n_history * 0.8)
         train = sales_values[:split]
         test = sales_values[split:]
-        test_weeks = week_labels_ts[split:]
-        train_weeks = week_labels_ts[:split]
-
-        pattern = fe.detect_demand_pattern(train, seasonality_mode=cfg.get('seasonalityMode', 'auto'))
         fc_horizon = min(len(test), cfg_horizon)
 
-        # Main model: ML forecast driven by the configuration panel
+        # Main model: ML forecast on the holdout window (out-of-sample KPI)
         fc_result = mlf.auto_ml_forecast(train, fc_horizon, preferred=preferred,
                                          seasonality_mode=cfg.get('seasonalityMode', 'auto'))
-
-        new_ts = []
-        for i, wk in enumerate(train_weeks):
-            new_ts.append(FORECAST_TIMESERIES[i])
-        last_fc = fc_result['p50'][-1] if fc_result['p50'] else 0
-        last_p10 = fc_result['p10'][-1] if fc_result.get('p10') else last_fc * 0.9
-        last_p90 = fc_result['p90'][-1] if fc_result.get('p90') else last_fc * 1.1
-        for i, wk in enumerate(test_weeks):
-            if i < len(fc_result['p50']):
-                new_ts.append({
-                    "week": wk,
-                    "actual": test[i] if i < len(test) else None,
-                    "p50": fc_result['p50'][i],
-                    "p10": fc_result['p10'][i],
-                    "p90": fc_result['p90'][i],
-                })
-            else:
-                new_ts.append({
-                    "week": wk,
-                    "actual": test[i] if i < len(test) else None,
-                    "p50": last_fc,
-                    "p10": last_p10,
-                    "p90": last_p90,
-                })
-        FORECAST_TIMESERIES = new_ts
-        # KPI must be computed on the out-of-sample window only — the train portion
-        # of the series is historical actuals (forecast == actual by construction),
-        # so including it would dilute WAPE/MAPE toward zero and overstate accuracy.
-        actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None][split:]
-        forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None][split:]
+        actuals = test[:fc_horizon]
+        forecasts = fc_result['p50'][:fc_horizon]
         kpi = fe.compute_kpi_metrics(actuals, forecasts)
+
+        # Future forecast for the dashboard chart — trained on the FULL
+        # history and appended after the last actual week (no fake repeats).
+        future = mlf.auto_ml_forecast(sales_values, cfg_horizon, preferred=preferred,
+                                      seasonality_mode=cfg.get('seasonalityMode', 'auto'))
+        kpi['totalForecastedDemand'] = round(float(sum(future['p50'])), -2)
+        future_p10 = future.get('p10') or [v * 0.9 for v in future['p50']]
+        future_p90 = future.get('p90') or [v * 1.1 for v in future['p50']]
+
+        new_ts = [
+            {"week": week_labels_ts[i], "actual": sales_values[i],
+             "p50": None, "p10": None, "p90": None}
+            for i in range(n_history)
+        ]
+        last_key = WEEK_KEYS[-1] if WEEK_KEYS else None
+        future_weeks = []
+        try:
+            last_date = datetime.strptime(f'{last_key}-1', '%G-W%V-%u')
+            future_weeks = [(last_date + timedelta(weeks=i + 1)).strftime('%b %d')
+                            for i in range(len(future['p50']))]
+        except Exception:
+            future_weeks = [f'W{i + 1}' for i in range(len(future['p50']))]
+        for i, wk in enumerate(future_weeks):
+            new_ts.append({
+                "week": wk, "actual": None,
+                "p50": future['p50'][i],
+                "p10": future_p10[i],
+                "p90": future_p90[i],
+            })
+        FORECAST_TIMESERIES = new_ts
     else:
         actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
         forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
@@ -512,7 +510,28 @@ def recompute_forecast_timeseries(weeks: int | None = None, preferred: str | Non
 
 def get_all_skus():
     _lazy_init()
-    return SKUS
+    cfg = get_app_config()
+    horizon = int(cfg.get('forecastHorizon', 12))
+    preferred = resolve_preferred_algorithm()
+    out = []
+    for sku in SKUS:
+        item = dict(sku)
+        # Real ML forecast first point when it has been computed (cached);
+        # otherwise the loader-computed model forecast is already real too.
+        cached = FORECAST_CACHE.get((sku['id'], horizon, preferred))
+        if cached and cached.get('p50'):
+            item['p50Forecast'] = round(float(cached['p50'][0]), 1)
+        series = item.get('fullTrend', item.get('trend', []))
+        inv = fe.compute_inventory_stats(
+            series,
+            lead_time_days=int(cfg.get('defaultLeadTime', 14)),
+            service_level_target=cfg.get('serviceLevelTarget', 97.5),
+            sell_price=item.get('sellPrice'),
+            moq=cfg.get('moq', 0))
+        item['reorderQty'] = inv['reorderQty']
+        item['safetyStock'] = inv['safetyStock']
+        out.append(item)
+    return out
 
 def get_sku_detail(sku_id: str):
     _lazy_init()
@@ -524,7 +543,10 @@ def get_sku_detail(sku_id: str):
     series = detail.get('fullTrend', detail.get('trend', []))
     series = _apply_config_to_series(series)
     if len(series) >= 16:
-        detail = {**detail, "forecast": compute_sku_forecast(sku_id)}
+        forecast = compute_sku_forecast(sku_id)
+        detail = {**detail, "forecast": forecast}
+        if forecast and forecast.get('p50'):
+            detail["p50Forecast"] = round(float(forecast['p50'][0]), 1)
         if sku_id not in BACKTEST_CACHE:
             BACKTEST_CACHE[sku_id] = fe.backtest(series, n_splits=4, horizon=bt_horizon)
         bt = BACKTEST_CACHE[sku_id]
@@ -545,6 +567,14 @@ def get_sku_detail(sku_id: str):
             'Erratic': 'ETS',
             'Smooth': 'ETS',
         }.get(pattern, detail.get('model', 'ETS'))
+        inv = fe.compute_inventory_stats(
+            series,
+            lead_time_days=int(cfg.get('defaultLeadTime', 14)),
+            service_level_target=cfg.get('serviceLevelTarget', 97.5),
+            sell_price=detail.get('sellPrice'),
+            moq=cfg.get('moq', 0))
+        detail["reorderQty"] = inv['reorderQty']
+        detail["safetyStock"] = inv['safetyStock']
     else:
         detail["backtestHistory"] = []
         if len(series) >= 4:
