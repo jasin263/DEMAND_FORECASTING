@@ -356,7 +356,7 @@ Sales don't happen in a vacuum. These external forces affect demand:
 
 Each factor can be toggled on/off. The system shows correlation values (r) between each factor and each SKU, plus detected lag (how many weeks before the factor affects sales).
 
-*Note: M5 has no real external data, so factors are generated as realistic synthetic series. The correlation infrastructure is production-ready.*
+*Note: Weather, economic, and competitive factors have no external data feed in the uploaded dataset, so they are shown as unavailable (toggle disabled). Holiday flags and monthly seasonality are computed from the real uploaded calendar and demand data — the correlation engine is real.*
 
 #### 14. Inventory Optimization (`/inventory`)
 Given a forecast, how much should you actually *order*? This feature computes:
@@ -510,6 +510,43 @@ curl http://localhost:8000/api/health
 
 # Should return: {"status":"healthy","service":"forecastiq-backend","version":"1.0.0"}
 ```
+
+---
+
+## 🐳 Docker — Run the Entire Project in Containers
+
+Two containers: **backend** (FastAPI) and **frontend** (Vite build served by nginx, with `/api` proxied to the backend).
+
+### One command — build and start
+```bash
+docker compose up --build
+```
+
+- Frontend: http://localhost:8080
+- Backend API: http://localhost:8000 (`/api/health` for the health check)
+- Backend container has a healthcheck; both restart automatically unless stopped.
+
+### Stop / rebuild
+```bash
+docker compose down          # stop containers
+docker compose up --build    # rebuild after code changes
+```
+
+### Run images individually
+```bash
+# Backend only
+docker build -t demandd-backend ./backend
+docker run -p 8000:8000 demandd-backend
+
+# Frontend only (needs the backend reachable as hostname "backend")
+docker build -t demandd-frontend ./frontend
+docker run --add-host backend:host-gateway -p 8080:80 demandd-frontend
+```
+
+### Notes
+- The backend reads `HOST`/`PORT` from env vars (`config.py`), so it also runs on Render/Railway-style platforms where the platform injects `PORT`.
+- State is in-memory — restarting a container resets uploaded data (same behavior as local dev). Re-upload via the onboarding wizard after a restart.
+- The demo M5 dataset ships as committed parquet caches (`backend/data/m5_cache`) so the app works with no external files.
 
 ---
 
