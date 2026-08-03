@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/backtesting/walk-forward")
-async def get_walk_forward(
+def get_walk_forward(
     horizon: int | None = Query(None, ge=2, le=26),
     n_splits: int = Query(5, ge=2, le=20),
     sku_limit: int = Query(50, ge=1, le=100),

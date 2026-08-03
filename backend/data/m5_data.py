@@ -15,7 +15,7 @@ from . import m5_loader
 import forecast_engine as fe
 import ml_forecast as mlf
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _initialized = False
 
 # Data holders

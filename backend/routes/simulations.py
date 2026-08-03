@@ -134,7 +134,7 @@ async def create_simulation(input_data: dict):
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/simulations/{sim_id}")
-async def get_simulation(sim_id: str):
+def get_simulation(sim_id: str):
     sim = SIMULATIONS.get(sim_id)
     if not sim:
         raise HTTPException(404, "Simulation not found")
@@ -142,6 +142,6 @@ async def get_simulation(sim_id: str):
 
 
 @router.delete("/api/tenants/nestle-fmcg-demo/simulations/{sim_id}")
-async def delete_simulation(sim_id: str):
+def delete_simulation(sim_id: str):
     SIMULATIONS.pop(sim_id, None)
     return {"status": "deleted"}

@@ -15,7 +15,7 @@ GLOBAL_SENSING_CONFIG = {
 }
 
 @router.get("/api/tenants/nestle-fmcg-demo/demand-sensing")
-async def get_demand_sensing(sku_limit: int = Query(20, ge=1, le=50)):
+def get_demand_sensing(sku_limit: int = Query(20, ge=1, le=50)):
     m5_data._lazy_init()
     results = []
     for sku in m5_data.SKUS[:sku_limit]:
@@ -70,6 +70,6 @@ def _compute_blended(signals, config):
 
 
 @router.post("/api/tenants/nestle-fmcg-demo/demand-sensing/config")
-async def update_sensing_config(config: dict):
+def update_sensing_config(config: dict):
     GLOBAL_SENSING_CONFIG.update(config)
     return GLOBAL_SENSING_CONFIG

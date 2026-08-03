@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/seasonal-decomposition")
-async def get_seasonal_decomposition(
+def get_seasonal_decomposition(
     period: int = Query(52, ge=4, le=104),
     sku_limit: int = Query(20, ge=1, le=50),
 ):

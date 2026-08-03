@@ -50,13 +50,13 @@ def _seed_real_sources():
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/data-sources", response_model=list[DataSource])
-async def get_data_sources():
+def get_data_sources():
     _seed_real_sources()
     return list(DATA_SOURCES_STORE)
 
 
 @router.post("/api/tenants/nestle-fmcg-demo/data-sources", response_model=DataSource)
-async def create_data_source(body: DataSourceCreate):
+def create_data_source(body: DataSourceCreate):
     _seed_real_sources()
     new_id = f"ds-{len(DATA_SOURCES_STORE) + 1:03d}"
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -73,7 +73,7 @@ async def create_data_source(body: DataSourceCreate):
 
 
 @router.post("/api/tenants/nestle-fmcg-demo/data-sources/{source_id}/refresh")
-async def refresh_data_source(source_id: str):
+def refresh_data_source(source_id: str):
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     for s in DATA_SOURCES_STORE:
         if s["id"] == source_id:
@@ -85,7 +85,7 @@ async def refresh_data_source(source_id: str):
 
 
 @router.delete("/api/tenants/nestle-fmcg-demo/data-sources/{source_id}")
-async def delete_data_source(source_id: str):
+def delete_data_source(source_id: str):
     for i, s in enumerate(DATA_SOURCES_STORE):
         if s["id"] == source_id:
             DATA_SOURCES_STORE.pop(i)

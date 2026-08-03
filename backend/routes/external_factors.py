@@ -92,7 +92,7 @@ def _pearson(a: np.ndarray, b: np.ndarray) -> float:
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/external-factors")
-async def get_external_factors(sku_limit: int = Query(20, ge=1, le=50)):
+def get_external_factors(sku_limit: int = Query(20, ge=1, le=50)):
     m5_data._lazy_init()
     weeks = _week_dates()
     seasonality = _monthly_seasonality()

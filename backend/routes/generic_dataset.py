@@ -8,19 +8,19 @@ router = APIRouter()
 
 
 @router.post('/api/tenants/nestle-fmcg-demo/generic-dataset/profile')
-async def profile_generic_dataset(file: UploadFile = File(...)):
+def profile_generic_dataset(file: UploadFile = File(...)):
     try:
-        contents = await file.read()
+        contents = file.file.read()
         return profile_dataset(contents, file.filename or 'dataset.csv')
     except Exception as exc:  # pragma: no cover - defensive path
         return JSONResponse(status_code=400, content={'error': str(exc)})
 
 
 @router.post('/api/tenants/nestle-fmcg-demo/generic-dataset/save')
-async def save_generic_dataset(file: UploadFile = File(...), mapping: str = Form(...)):
+def save_generic_dataset(file: UploadFile = File(...), mapping: str = Form(...)):
     try:
         import json
-        contents = await file.read()
+        contents = file.file.read()
         mapping_data = json.loads(mapping)
         PENDING_USER_DATASET['file_bytes'] = contents
         PENDING_USER_DATASET['filename'] = file.filename or 'dataset.csv'
@@ -33,11 +33,11 @@ async def save_generic_dataset(file: UploadFile = File(...), mapping: str = Form
 
 
 @router.post('/api/tenants/nestle-fmcg-demo/generic-dataset/forecast')
-async def forecast_generic_dataset(file: UploadFile = File(...), mapping: str = Form(...)):
+def forecast_generic_dataset(file: UploadFile = File(...), mapping: str = Form(...)):
     try:
         import json
 
-        contents = await file.read()
+        contents = file.file.read()
         mapping_data = json.loads(mapping)
         return forecast_from_mapping(contents, file.filename or 'dataset.csv', mapping_data)
     except Exception as exc:  # pragma: no cover - defensive path

@@ -33,7 +33,7 @@ def persist_pending_dataset(file_bytes: bytes, filename: str, mapping: dict[str,
         pass
 
 
-def restore_persisted_dataset() -> bool:
+def restore_persisted_dataset(compute_profile: bool = True) -> bool:
     """Load the persisted upload back into PENDING_USER_DATASET.
 
     Called at boot so the previously uploaded dataset is used again
@@ -54,10 +54,11 @@ def restore_persisted_dataset() -> bool:
     PENDING_USER_DATASET['file_bytes'] = file_bytes
     PENDING_USER_DATASET['filename'] = filename
     PENDING_USER_DATASET['mapping'] = mapping
-    try:
-        PENDING_USER_DATASET['light_profile'] = _light_profile(file_bytes, filename, mapping)
-    except Exception:
-        PENDING_USER_DATASET.pop('light_profile', None)
+    if compute_profile:
+        try:
+            PENDING_USER_DATASET['light_profile'] = _light_profile(file_bytes, filename, mapping)
+        except Exception:
+            PENDING_USER_DATASET.pop('light_profile', None)
     return True
 
 

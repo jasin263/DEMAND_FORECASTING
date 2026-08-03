@@ -6,7 +6,7 @@ from data import m5_data
 router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/promotion-impact")
-async def get_promotion_impact():
+def get_promotion_impact():
     """Return promotion lift and price elasticity analysis for all SKUs."""
     from data.m5_data import get_sku_detail
 
@@ -75,7 +75,7 @@ async def get_promotion_impact():
     return {"skus": results, "total": len(results)}
 
 @router.get("/api/tenants/nestle-fmcg-demo/promotion-impact/{sku_id}")
-async def get_sku_promotion_impact(sku_id: str):
+def get_sku_promotion_impact(sku_id: str):
     """Return promotion impact for a single SKU."""
     from data.m5_data import get_sku_detail
 

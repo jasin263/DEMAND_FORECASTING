@@ -5,5 +5,5 @@ from data import m5_data
 router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/kpi-summary", response_model=KPISummary)
-async def get_kpi_summary():
+def get_kpi_summary():
     return m5_data.get_kpi_summary()

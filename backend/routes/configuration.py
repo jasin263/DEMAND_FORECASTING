@@ -15,11 +15,11 @@ def _get_config():
     return _APP_CONFIG
 
 @router.get("/api/tenants/nestle-fmcg-demo/configuration", response_model=AppConfig)
-async def get_configuration():
+def get_configuration():
     return _get_config()
 
 @router.put("/api/tenants/nestle-fmcg-demo/configuration", response_model=AppConfig)
-async def update_configuration(body: AppConfig):
+def update_configuration(body: AppConfig):
     global _APP_CONFIG
     _APP_CONFIG = body.model_dump()
     # Persist into the pipeline's config store so every consumer

@@ -160,13 +160,13 @@ def _build_pipeline_log() -> dict:
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/pipeline-log")
-async def get_pipeline_log():
+def get_pipeline_log():
     """Return the real pipeline run log (dataset facts + last computed results)."""
     return _build_pipeline_log()
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/forecast-timeseries", response_model=list[ForecastDataPoint])
-async def get_forecast_timeseries(
+def get_forecast_timeseries(
     weeks: int = Query(16, ge=1, le=52),
     refresh: bool = Query(False),
 ):
@@ -177,7 +177,7 @@ async def get_forecast_timeseries(
     return ts[-min(weeks, len(ts)):]
 
 @router.post("/api/tenants/nestle-fmcg-demo/forecast-timeseries/rerun")
-async def rerun_forecast():
+def rerun_forecast():
     """Trigger full forecast recomputation with ML models and return fresh data."""
     logger.info("rerun_forecast called")
     has_pending = PENDING_USER_DATASET.get('file_bytes') is not None

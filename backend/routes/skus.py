@@ -6,7 +6,7 @@ from data import m5_data
 router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/skus")
-async def get_skus(
+def get_skus(
     page: int = Query(1, ge=1),
     pageSize: int = Query(10, ge=1, le=100),
     search: Optional[str] = None,
@@ -36,7 +36,7 @@ async def get_skus(
     return {"items": results[start:end], "total": total, "page": page, "pageSize": pageSize, "totalPages": total_pages}
 
 @router.get("/api/tenants/nestle-fmcg-demo/skus/{sku_id}")
-async def get_sku_detail_route(sku_id: str):
+def get_sku_detail_route(sku_id: str):
     detail = m5_data.get_sku_detail(sku_id)
     if not detail:
         raise HTTPException(status_code=404, detail=f"SKU {sku_id} not found")

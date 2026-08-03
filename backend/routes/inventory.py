@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/inventory/optimization")
-async def get_inventory_optimization(
+def get_inventory_optimization(
     sku_limit: int = Query(50, ge=1, le=100),
     service_level: float | None = Query(None, ge=0.8, le=0.999),
     lead_time_days: int | None = Query(None, ge=1, le=90),

@@ -5,6 +5,7 @@ Designed to be more enterprise-ready with configuration-driven startup and struc
 """
 import sys
 import os
+import threading
 import logging
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -83,20 +84,35 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def restore_uploaded_dataset():
-        """Reuse the previously uploaded dataset after a container restart."""
-        import generic_dataset as gd
-        from data import m5_data
-        try:
-            if gd.restore_persisted_dataset():
-                pending = gd.PENDING_USER_DATASET
-                gd.load_user_dataset_into_m5(
-                    pending['file_bytes'], pending['filename'], pending['mapping'])
-                pending.clear()
-                m5_data.recompute_forecast_timeseries()
+        """Reuse the previously uploaded dataset after a container restart.
+
+        Runs in a background thread so the server starts serving immediately;
+        the existing m5_data lock makes _lazy_init wait for the restore to
+        finish instead of loading the demo data.
+        """
+        def _restore():
+            import generic_dataset as gd
+            from data import m5_data
+            try:
+                # Hold m5_data's init lock across read+load+recompute so any
+                # concurrent _lazy_init() request waits for the restore instead
+                # of loading the demo dataset first (race) or seeing cleared
+                # KPI state mid-restore. compute_profile is skipped at boot —
+                # the light profile is only needed for pending display.
+                with m5_data._lock:
+                    if not gd.restore_persisted_dataset(compute_profile=False):
+                        return
+                    pending = gd.PENDING_USER_DATASET
+                    gd.load_user_dataset_into_m5(
+                        pending['file_bytes'], pending['filename'], pending['mapping'])
+                    pending.clear()
+                    m5_data.recompute_forecast_timeseries()
                 logging.getLogger("boot").info(
                     "Persisted uploaded dataset restored · %d SKUs", len(m5_data.SKUS))
-        except Exception as exc:  # pragma: no cover - defensive path
-            logging.getLogger("boot").warning("Could not restore persisted dataset: %s", exc)
+            except Exception as exc:  # pragma: no cover - defensive path
+                logging.getLogger("boot").warning("Could not restore persisted dataset: %s", exc)
+
+        threading.Thread(target=_restore, daemon=True).start()
 
     app.include_router(kpi_router)
     app.include_router(accuracy_router)

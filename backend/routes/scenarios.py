@@ -140,13 +140,13 @@ def _seed_scenarios():
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/scenarios", response_model=list[Scenario])
-async def get_scenarios():
+def get_scenarios():
     _seed_scenarios()
     return list(SCENARIOS_STORE)
 
 
 @router.post("/api/tenants/nestle-fmcg-demo/scenarios", response_model=Scenario)
-async def create_scenario(body: Scenario):
+def create_scenario(body: Scenario):
     new_id = f"sc-{len(SCENARIOS_STORE) + 1:03d}"
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     entry = {
@@ -162,7 +162,7 @@ async def create_scenario(body: Scenario):
 
 
 @router.put("/api/tenants/nestle-fmcg-demo/scenarios/{scenario_id}", response_model=Scenario)
-async def update_scenario(scenario_id: str, body: Scenario):
+def update_scenario(scenario_id: str, body: Scenario):
     for i, s in enumerate(SCENARIOS_STORE):
         if s["id"] == scenario_id:
             SCENARIOS_STORE[i] = {
@@ -178,7 +178,7 @@ async def update_scenario(scenario_id: str, body: Scenario):
 
 
 @router.delete("/api/tenants/nestle-fmcg-demo/scenarios/{scenario_id}")
-async def delete_scenario(scenario_id: str):
+def delete_scenario(scenario_id: str):
     for i, s in enumerate(SCENARIOS_STORE):
         if s["id"] == scenario_id:
             SCENARIOS_STORE.pop(i)

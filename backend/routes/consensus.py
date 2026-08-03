@@ -30,7 +30,7 @@ GLOBAL_CONSENSUS_CONFIG = {
 }
 
 @router.get("/api/tenants/nestle-fmcg-demo/consensus")
-async def get_consensus(
+def get_consensus(
     sku_limit: int = Query(5, ge=1, le=50),
     horizon: int = Query(12, ge=4, le=26),
 ):
