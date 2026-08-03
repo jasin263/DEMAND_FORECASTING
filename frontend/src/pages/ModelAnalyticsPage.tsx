@@ -21,6 +21,9 @@ export default function ModelAnalyticsPage() {
     ? comparison.reduce((best, m, i, arr) => (m.accuracy > arr[best].accuracy ? i : best), 0)
     : -1;
   const bestModel = bestIndex >= 0 ? comparison[bestIndex] : undefined;
+  const baselineAccuracy = comparison.find((m) => m.name.toLowerCase() === 'naive')?.accuracy;
+  const outperformance =
+    bestModel && baselineAccuracy !== undefined ? bestModel.accuracy - baselineAccuracy : null;
 
   const handleRefresh = async () => {
     await Promise.all([refetchAnalytics(), refetchBacktest()]);
@@ -172,7 +175,9 @@ export default function ModelAnalyticsPage() {
                   <div className="mt-3">
                     <p className="text-lg font-bold text-foreground">{bestModel.name}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Outperforms baseline by 4.7% on recent retail demand patterns
+                      {outperformance !== null
+                        ? `Outperforms baseline by ${outperformance.toFixed(1)}% on recent retail demand patterns`
+                        : 'Best performing model on recent retail demand patterns'}
                     </p>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2">
