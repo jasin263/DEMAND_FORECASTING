@@ -6,6 +6,8 @@ from typing import Any
 import pandas as pd
 import numpy as np
 
+from data import m5_data
+
 # Buffer for user-uploaded dataset — populated by save endpoint, consumed by rerun_forecast
 PENDING_USER_DATASET: dict[str, Any] = {}
 
