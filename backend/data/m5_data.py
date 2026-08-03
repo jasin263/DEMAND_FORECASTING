@@ -223,9 +223,23 @@ def _precompute_forecasts(start_timer: float = 0):
             })
         FORECAST_TIMESERIES = new_ts
     else:
+        # Short-history path: no p50 is stored on historical rows for uploaded
+        # datasets, so compute a REAL holdout on the aggregate series instead.
         actuals = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
-        forecasts = [ts['p50'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
-        kpi = fe.compute_kpi_metrics(actuals, forecasts)
+        n = len(actuals)
+        if n >= 5:
+            split = min(max(int(n * 0.7), 3), n - 1)
+            train = actuals[:split]
+            test = actuals[split:]
+            fc_horizon = min(len(test), cfg_horizon)
+            fc_result = mlf.auto_ml_forecast(train, fc_horizon, preferred=preferred,
+                                             seasonality_mode=cfg.get('seasonalityMode', 'auto'))
+            kpi = fe.compute_kpi_metrics(test[:fc_horizon], fc_result['p50'][:fc_horizon])
+        elif n > 0:
+            kpi = fe.compute_kpi_metrics(actuals, actuals)
+        else:
+            kpi = {'wape': 0, 'mape': 0, 'forecastBias': 0, 'exceptionSkus': 0,
+                   'serviceLevel': 0, 'totalForecastedDemand': 0}
 
     kpi_wape = kpi.get('wape', 0)
     kpi_mape = kpi.get('mape', 0)

@@ -28,7 +28,12 @@ def _build_pipeline_log() -> dict:
 
     ts = m5_data.get_forecast_timeseries()
     n_history = sum(1 for t in ts if t.get('actual') is not None)
-    train_w = int(n_history * 0.8) if n_history >= 12 else 0
+    if n_history >= 12:
+        train_w = int(n_history * 0.8)
+    elif n_history >= 5:
+        train_w = min(max(int(n_history * 0.7), 3), n_history - 1)
+    else:
+        train_w = 0
     test_w = n_history - train_w
 
     kpi = m5_data.KPI_SUMMARY or {}
