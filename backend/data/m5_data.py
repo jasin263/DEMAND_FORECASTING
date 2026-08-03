@@ -38,6 +38,9 @@ N_SKUS = 0
 ACCURACY_HISTORY = []  # list of AccuracyTrendPoint dicts
 EXCEPTIONS_STORE = {}  # id -> dict, mutable for workflow
 APP_CONFIG = {}  # cached config
+# Calendar metadata for the uploaded dataset, so exception detection can be
+# re-run (with a new threshold) without re-parsing the source file.
+USER_DATASET_META = None  # {'week_keys', 'week_dates', 'week_day_counts'} or None (M5 default)
 
 # Forecast/backtest caches — keyed by (sku_id, horizon, preferred) / sku_id.
 # Prevents re-fitting the same SKU on every page load or route call.
@@ -129,6 +132,30 @@ def _lazy_init():
         _initialized = True
         logger.info("Ready: %d SKUs, %d categories, %d weeks", N_SKUS, len(CATEGORIES), len(WEEK_KEYS))
 
+def rebuild_exceptions():
+    """Re-run rule-based exception detection on the current SKUs.
+
+    Uses the configured exceptionThreshold, so threshold changes from the
+    configuration panel take effect on the next full recompute.
+    """
+    global EXCEPTIONS, EXCEPTIONS_STORE
+    from generic_dataset import _build_user_exceptions
+    if USER_DATASET_META:
+        week_order = USER_DATASET_META.get('week_keys')
+        week_dates = USER_DATASET_META.get('week_dates')
+        week_day_counts = USER_DATASET_META.get('week_day_counts')
+    else:
+        week_order, week_dates, week_day_counts = WEEK_KEYS, None, None
+    excs = _build_user_exceptions(SKUS, week_order=week_order, week_dates=week_dates,
+                                  week_day_counts=week_day_counts)
+    EXCEPTIONS = excs
+    EXCEPTIONS_STORE = {}
+    for exc in EXCEPTIONS:
+        exc['status'] = 'open'
+        EXCEPTIONS_STORE[exc['id']] = exc
+    return EXCEPTIONS
+
+
 def _precompute_forecasts(start_timer: float = 0):
     """Pre-compute KPIs, model comparison, backtest using ML models.
     All deltas compare the main model against a Naive baseline.
@@ -137,6 +164,9 @@ def _precompute_forecasts(start_timer: float = 0):
     global ACCURACY_HISTORY
 
     t_start = start_timer or time.time()
+
+    # Exceptions reflect the current SKU set and the configured threshold
+    rebuild_exceptions()
 
     # Configuration panel drives the horizon / algorithm used for the KPI run
     cfg = get_app_config()

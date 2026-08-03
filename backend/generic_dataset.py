@@ -293,6 +293,13 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
     # Partial calendar weeks (e.g. ISO W53, or the tail of the file) carry fewer than
     # 3 days of data and produce fake "demand drop" signals — exclude them.
     week_day_counts = df.groupby('week_key')[date_col].nunique().to_dict()
+    # Keep the calendar metadata so exception detection can be re-run whenever
+    # the exception threshold changes in the configuration panel.
+    m5_data.USER_DATASET_META = {
+        'week_keys': week_keys,
+        'week_dates': week_dates,
+        'week_day_counts': week_day_counts,
+    }
     m5_data.EXCEPTIONS = _build_user_exceptions(skus, week_order=week_keys, week_dates=week_dates,
                                                 week_day_counts=week_day_counts)
     m5_data.EXCEPTIONS_STORE = {e['id']: e for e in m5_data.EXCEPTIONS}
@@ -412,6 +419,7 @@ def _build_user_exceptions(skus: list[dict], week_order: list | None = None,
             "spikeMultiple": None,
             "dropRatio": None,
             "severity": c['severity'],
+            "status": "open",
             "timestamp": exc_stamp.isoformat(),
         }
         if c['type'] == 'high-mape':
