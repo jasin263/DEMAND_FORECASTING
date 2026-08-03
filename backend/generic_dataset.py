@@ -15,6 +15,25 @@ PENDING_USER_DATASET: dict[str, Any] = {}
 DATASET_PROFILE: dict[str, Any] = {}
 
 
+def _detect_granularity(df: pd.DataFrame, date_col: str) -> str:
+    """Infer record frequency from the actual spacing between consecutive dates."""
+    if date_col not in df.columns:
+        return 'weekly'
+    unique_dates = pd.Series(df[date_col].unique()).sort_values()
+    if len(unique_dates) < 2:
+        return 'weekly'
+    median_gap = unique_dates.diff().dropna().median()
+    if pd.isna(median_gap):
+        return 'weekly'
+    if median_gap <= pd.Timedelta(days=1.5):
+        return 'daily'
+    if median_gap <= pd.Timedelta(days=10):
+        return 'weekly'
+    if median_gap <= pd.Timedelta(days=35):
+        return 'monthly'
+    return 'weekly'
+
+
 def _detect_column_features(columns: list[str]) -> dict[str, bool]:
     """Classify columns by keyword to know what data the client has."""
     lower = [str(c).lower().replace(' ', '_') for c in columns]
@@ -280,7 +299,7 @@ def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[st
         'columns': [str(c) for c in df.columns],
         'rows': total_rows,
         'null_rate': null_rate,
-        'granularity': 'daily' if n_weeks > 130 else ('weekly' if n_weeks > 30 else 'monthly'),
+        'granularity': _detect_granularity(df, date_col),
         'n_weeks': n_weeks,
         'entities': len(skus),
         'date_from': df[date_col].min().strftime('%Y-%m-%d') if date_col in df.columns else None,

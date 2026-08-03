@@ -396,7 +396,19 @@ def compute_data_maturity() -> dict[str, Any]:
         summary_parts.append('You have all the data we need for core forecasting.')
     else:
         if missing:
-            summary_parts.append(f"{len(missing)} required inputs are missing ({', '.join(d['name'] for d in missing[:3])}{'…' if len(missing) > 3 else ''}).")
+            essential = [d for d in missing if d['importance'] == 'essential']
+            optional = [d for d in missing if d['importance'] != 'essential']
+            if essential:
+                summary_parts.append(
+                    f"{len(essential)} essential input{'s' if len(essential) > 1 else ''} missing "
+                    f"({', '.join(d['name'] for d in essential[:3])}{'…' if len(essential) > 3 else ''})."
+                )
+            if optional:
+                summary_parts.append(
+                    f"{len(optional)} optional input{'s' if len(optional) > 1 else ''} missing "
+                    f"({', '.join(d['name'] for d in optional[:3])}{'…' if len(optional) > 3 else ''}) "
+                    f'— recommended for advanced analytics.'
+                )
         if partial:
             summary_parts.append(f"{len(partial)} inputs are partial ({', '.join(d['name'] for d in partial[:2])}{'…' if len(partial) > 2 else ''}).")
         summary_parts.append('Closing these unlocks more advanced analytics.')
