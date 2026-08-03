@@ -219,16 +219,19 @@ def prophet_forecast(series: list[float], horizon: int = 12,
 def auto_ml_forecast(series: list[float], horizon: int = 12,
                      prices: Optional[list[float]] = None,
                      events: Optional[list[list[str]]] = None,
-                     preferred: str = 'lightgbm') -> dict:
+                     preferred: str = 'lightgbm',
+                     seasonality_mode: str = 'auto') -> dict:
     """Auto-select forecast method. Falls back through Prophet→LightGBM→ETS.
 
     Strongly seasonal series are routed to Holt-Winters so the forecast
     continues the seasonal wave instead of extrapolating a smooth trend.
+    seasonality_mode overrides the seasonal routing ('auto', 'weekly',
+    'monthly', 'yearly', 'none').
     """
     n = len(series)
     if n < MIN_HISTORY:
         from forecast_engine import forecast_for_pattern, detect_demand_pattern
-        pattern = detect_demand_pattern(series)
+        pattern = detect_demand_pattern(series, seasonality_mode=seasonality_mode)
         return forecast_for_pattern(series, pattern, horizon)
     
     # Seasonal routing: seasonal models carry the yearly wave forward,
@@ -236,7 +239,7 @@ def auto_ml_forecast(series: list[float], horizon: int = 12,
     if n >= 52:
         try:
             from forecast_engine import detect_demand_pattern, holt_winters_forecast
-            pattern = detect_demand_pattern(series)
+            pattern = detect_demand_pattern(series, seasonality_mode=seasonality_mode)
             if pattern == "Seasonal":
                 result = holt_winters_forecast(series, horizon)
                 if len(set(result['p50'])) > 1:
@@ -252,7 +255,7 @@ def auto_ml_forecast(series: list[float], horizon: int = 12,
     # Validate: if forecast is degenerate (all same value), fallback
     if len(set(result['p50'])) <= 1:
         from forecast_engine import forecast_for_pattern, detect_demand_pattern
-        pattern = detect_demand_pattern(series)
+        pattern = detect_demand_pattern(series, seasonality_mode=seasonality_mode)
         return forecast_for_pattern(series, pattern, horizon)
     
     return result

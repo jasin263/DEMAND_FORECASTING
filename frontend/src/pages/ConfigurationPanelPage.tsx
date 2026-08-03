@@ -132,7 +132,7 @@ export default function ConfigurationPanelPage() {
     try {
       await saveConfig(config);
       setHasChanges(false);
-      toast.success('Configuration saved. Changes will apply on next forecast run.', { duration: 3000 });
+      toast.success('Configuration saved. Recomputing forecasts…', { duration: 3000 });
     } catch (err) {
       toast.error(saveError || 'Failed to save configuration', { duration: 3000 });
     }

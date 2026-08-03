@@ -20,7 +20,13 @@ def _safe_series(series: list[float]) -> np.ndarray:
     arr = np.nan_to_num(arr, nan=0.0)
     return arr
 
-def detect_demand_pattern(series: list[float]) -> str:
+def detect_demand_pattern(series: list[float], seasonality_mode: str = 'auto') -> str:
+    """Detect the demand pattern.
+
+    seasonality_mode overrides the seasonal classification:
+    'none' forces non-seasonal models, 'yearly'/'monthly'/'weekly' force
+    seasonal models (Intermittent routing is always preserved).
+    """
     arr = _safe_series(series)
     n = len(arr)
     if n < 4:
@@ -28,6 +34,10 @@ def detect_demand_pattern(series: list[float]) -> str:
     zero_ratio = np.sum(arr == 0) / n
     if zero_ratio > 0.25:
         return "Intermittent"
+    if seasonality_mode == 'none':
+        return "Smooth"
+    if seasonality_mode in ('yearly', 'monthly', 'weekly'):
+        return "Seasonal"
     mean_val = np.mean(arr)
     if mean_val > 0 and np.std(arr) / mean_val > 1.2:
         return "Erratic"
@@ -39,6 +49,32 @@ def detect_demand_pattern(series: list[float]) -> str:
         except:
             pass
     return "Smooth"
+
+
+def apply_outlier_treatment(series: list[float], method: str = 'winsorize') -> list[float]:
+    """Clean a demand series according to the configured outlier treatment.
+
+    - 'winsorize': clip to the 1st/99th percentiles
+    - 'remove': replace values beyond 3 sigma with a 5-week rolling median
+    - 'none': return the series unchanged
+    """
+    arr = _safe_series(series)
+    if method == 'none' or len(arr) < 5:
+        return [float(v) for v in arr]
+    if method == 'winsorize':
+        lo, hi = np.percentile(arr, [1, 99])
+        if lo == hi:
+            return [float(v) for v in arr]
+        return [float(min(max(v, lo), hi)) for v in arr]
+    if method == 'remove':
+        mean_val, std_val = np.mean(arr), np.std(arr)
+        if std_val <= 0:
+            return [float(v) for v in arr]
+        rolling = np.array([float(np.median(arr[max(0, i - 2):i + 3])) for i in range(len(arr))])
+        cleaned = [float(v) if abs(v - mean_val) <= 3 * std_val else rolling[i]
+                   for i, v in enumerate(arr)]
+        return cleaned
+    return [float(v) for v in arr]
 
 def naive_forecast(series: list[float], horizon: int = 12) -> dict:
     """Naive: repeat last known value."""

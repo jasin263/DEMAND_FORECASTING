@@ -44,6 +44,49 @@ APP_CONFIG = {}  # cached config
 FORECAST_CACHE = {}
 BACKTEST_CACHE = {}
 
+# Guards concurrent full recomputes (e.g. config save + manual rerun)
+_recompute_lock = threading.Lock()
+
+_CONFIG_DEFAULTS = {
+    'granularity': 'weekly',
+    'forecastHorizon': 12,
+    'historyWindow': 104,
+    'algorithmMode': 'auto',
+    'selectedAlgorithm': 'prophet',
+    'outlierTreatment': 'winsorize',
+    'seasonalityMode': 'auto',
+    'backtestingWindow': 8,
+    'exceptionThreshold': 25,
+    'serviceLevelTarget': 97.5,
+    'defaultLeadTime': 14,
+    'predictionIntervals': True,
+    'hierarchicalReconciliation': 'bottom-up',
+}
+
+
+def get_app_config() -> dict:
+    """Resolve the application configuration (defaults merged with user overrides)."""
+    return {**_CONFIG_DEFAULTS, **APP_CONFIG}
+
+
+def resolve_preferred_algorithm() -> str:
+    """Map the config's algorithmMode/selectedAlgorithm to the ML backend name."""
+    cfg = get_app_config()
+    if cfg.get('algorithmMode') == 'manual':
+        return 'lightgbm' if cfg.get('selectedAlgorithm') == 'lightgbm' else 'prophet'
+    return 'lightgbm'  # auto: LightGBM primary, Prophet in the fallback chain
+
+
+def _apply_config_to_series(series: list) -> list:
+    """Trim to the configured history window and apply outlier treatment."""
+    cfg = get_app_config()
+    hw = cfg.get('historyWindow', 104)
+    if hw and hw > 0 and len(series) > hw:
+        series = series[-hw:]
+    if cfg.get('outlierTreatment') != 'none':
+        series = fe.apply_outlier_treatment(series, cfg.get('outlierTreatment', 'winsorize'))
+    return series
+
 def _lazy_init():
     global _initialized, SKUS, SKU_DETAIL_MAP, WEEKLY_SALES, CATEGORIES
     global FORECAST_TIMESERIES, EXCEPTIONS, WEEK_LABELS, WEEK_KEYS
@@ -95,6 +138,12 @@ def _precompute_forecasts(start_timer: float = 0):
 
     t_start = start_timer or time.time()
 
+    # Configuration panel drives the horizon / algorithm used for the KPI run
+    cfg = get_app_config()
+    cfg_horizon = max(int(cfg.get('forecastHorizon', 12)), 4)
+    preferred = resolve_preferred_algorithm()
+    bt_horizon = max(int(cfg.get('backtestingWindow', 8)), 2)
+
     # Build real sales series from forecast timeseries
     sales_values = [ts['actual'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
     week_labels_ts = [ts['week'] for ts in FORECAST_TIMESERIES if ts['actual'] is not None]
@@ -107,11 +156,12 @@ def _precompute_forecasts(start_timer: float = 0):
         test_weeks = week_labels_ts[split:]
         train_weeks = week_labels_ts[:split]
 
-        pattern = fe.detect_demand_pattern(train)
-        fc_horizon = len(test) if len(test) < 52 else 52
+        pattern = fe.detect_demand_pattern(train, seasonality_mode=cfg.get('seasonalityMode', 'auto'))
+        fc_horizon = min(len(test), cfg_horizon)
 
-        # Main model: ML forecast with LightGBM (fast; Prophet stays as fallback)
-        fc_result = mlf.auto_ml_forecast(train, fc_horizon, preferred='lightgbm')
+        # Main model: ML forecast driven by the configuration panel
+        fc_result = mlf.auto_ml_forecast(train, fc_horizon, preferred=preferred,
+                                         seasonality_mode=cfg.get('seasonalityMode', 'auto'))
         # Baseline: Naive
         naive_result = fe.naive_forecast(train, fc_horizon)
 
@@ -179,7 +229,7 @@ def _precompute_forecasts(start_timer: float = 0):
     series_list = [sku.get('fullTrend', sku['trend']) for sku in SKUS]
     series_list = [s for s in series_list if len(s) >= 16]
     logger.info("Running model comparison on %d SKUs...", min(len(series_list), 50))
-    model_comp = fe.compute_model_comparison(series_list[:50], horizon=8)
+    model_comp = fe.compute_model_comparison(series_list[:50], horizon=bt_horizon)
     logger.info("Model comparison done")
 
     # Compute backtest on up to 100 SKUs for performance
@@ -194,7 +244,7 @@ def _precompute_forecasts(start_timer: float = 0):
             logger.info("  backtest progress: %d/%d", idx, n_bt)
         series = sku.get('fullTrend', sku['trend'])
         if len(series) >= 16:
-            bt = fe.backtest(series, n_splits=3, horizon=4)
+            bt = fe.backtest(series, n_splits=3, horizon=bt_horizon)
             if bt['mape'] > 0:
                 bt_mapes.append(bt['mape'])
                 bt_wapes.append(bt['wape'])
@@ -205,7 +255,7 @@ def _precompute_forecasts(start_timer: float = 0):
                     "bias": bt['bias'],
                     "coverage": round(100 - bt['mape'], 1),
                 })
-            bt_naive = fe.backtest(series, n_splits=3, horizon=4, force_naive=True)
+            bt_naive = fe.backtest(series, n_splits=3, horizon=bt_horizon, force_naive=True)
             if bt_naive['mape'] > 0:
                 bt_naive_mapes.append(bt_naive['mape'])
 
@@ -284,13 +334,20 @@ def _precompute_forecasts(start_timer: float = 0):
     if len(ACCURACY_HISTORY) > 52:
         ACCURACY_HISTORY = ACCURACY_HISTORY[-52:]
 
-def compute_sku_forecast(sku_id: str, horizon: int = 12, preferred: str = 'lightgbm') -> dict:
+def compute_sku_forecast(sku_id: str, horizon: int | None = None, preferred: str | None = None) -> dict:
     """Compute a forecast using ML models with price/event features.
 
-    Results are cached per (sku_id, horizon, model) so repeated calls from SKU
-    detail, hierarchy, promotions, and consensus reuse the same fit instead of
-    re-running an expensive model (Prophet ~30-60s) every time.
+    horizon/preferred default to the values from the configuration panel
+    (forecastHorizon + algorithmMode/selectedAlgorithm). Results are cached per
+    (sku_id, horizon, model) so repeated calls from SKU detail, hierarchy,
+    promotions, and consensus reuse the same fit instead of re-running an
+    expensive model (Prophet ~30-60s) every time.
     """
+    cfg = get_app_config()
+    if horizon is None:
+        horizon = cfg.get('forecastHorizon', 12)
+    if preferred is None:
+        preferred = resolve_preferred_algorithm()
     _lazy_init()
     cache_key = (sku_id, horizon, preferred)
     cached = FORECAST_CACHE.get(cache_key)
@@ -298,6 +355,7 @@ def compute_sku_forecast(sku_id: str, horizon: int = 12, preferred: str = 'light
         return cached
 
     series = get_sku_timeseries(sku_id)
+    series = _apply_config_to_series(series)
     if len(series) < 4:
         result = {"p50": [0]*horizon, "p10": [0]*horizon, "p90": [0]*horizon}
         FORECAST_CACHE[cache_key] = result
@@ -309,7 +367,12 @@ def compute_sku_forecast(sku_id: str, horizon: int = 12, preferred: str = 'light
     events = sku.get('events')
 
     # Use ML forecast with auto-fallback (Prophet stays in the fallback chain)
-    result = mlf.auto_ml_forecast(series, horizon, prices, events, preferred=preferred)
+    result = mlf.auto_ml_forecast(series, horizon, prices, events, preferred=preferred,
+                                  seasonality_mode=cfg.get('seasonalityMode', 'auto'))
+
+    # Prediction intervals can be disabled from the configuration panel
+    if not cfg.get('predictionIntervals', True):
+        result = {"p50": result['p50'], "p10": list(result['p50']), "p90": list(result['p50'])}
 
     # Update SKU's forecast in place for caching
     sku['cached_forecast'] = result
@@ -317,7 +380,10 @@ def compute_sku_forecast(sku_id: str, horizon: int = 12, preferred: str = 'light
     return result
 
 def get_hierarchical_forecast() -> dict:
-    """Compute bottom-up reconciled forecasts across hierarchy."""
+    """Compute reconciled forecasts across hierarchy per the configuration panel."""
+    cfg = get_app_config()
+    horizon = cfg.get('forecastHorizon', 12)
+    recon_method = cfg.get('hierarchicalReconciliation', 'bottom-up')
     _lazy_init()
     sku_forecasts = {}
     hierarchy = {}
@@ -325,7 +391,7 @@ def get_hierarchical_forecast() -> dict:
 
     for sku in SKUS:
         sku_id = sku['id']
-        fc = compute_sku_forecast(sku_id, horizon=12)
+        fc = compute_sku_forecast(sku_id, horizon=horizon)
         sku_forecasts[sku_id] = fc
         cat = sku['category']
         if cat not in category_skus:
@@ -335,10 +401,13 @@ def get_hierarchical_forecast() -> dict:
     for cat, sku_ids in category_skus.items():
         hierarchy[cat] = sku_ids
 
-    reconciled = mlf.hierarchical_reconcile(sku_forecasts, hierarchy)
+    if recon_method == 'none':
+        nodes = sku_forecasts
+    else:
+        nodes = mlf.hierarchical_reconcile(sku_forecasts, hierarchy)
     return {
-        "nodes": reconciled,
-        "reconciliationMethod": "bottom-up",
+        "nodes": nodes,
+        "reconciliationMethod": recon_method,
         "lastReconciled": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -394,12 +463,17 @@ def update_exception(exc_id: str, action: str, note: str = None) -> dict:
     exc['updatedAt'] = datetime.now(timezone.utc).isoformat()
     return exc
 
-def recompute_forecast_timeseries(weeks: int = 16, preferred: str = 'lightgbm'):
+def recompute_forecast_timeseries(weeks: int | None = None, preferred: str | None = None):
     """Re-run full forecast computation with ML and return fresh timeseries."""
-    _lazy_init()
-    FORECAST_CACHE.clear()
-    BACKTEST_CACHE.clear()
-    _precompute_forecasts(start_timer=time.time())
+    if preferred is None:
+        preferred = resolve_preferred_algorithm()
+    with _recompute_lock:
+        _lazy_init()
+        FORECAST_CACHE.clear()
+        BACKTEST_CACHE.clear()
+        _precompute_forecasts(start_timer=time.time())
+    if weeks is None:
+        weeks = max(int(get_app_config().get('forecastHorizon', 12)), 4)
     n = min(weeks, len(FORECAST_TIMESERIES))
     return FORECAST_TIMESERIES[-n:]
 
@@ -409,14 +483,17 @@ def get_all_skus():
 
 def get_sku_detail(sku_id: str):
     _lazy_init()
+    cfg = get_app_config()
+    bt_horizon = max(int(cfg.get('backtestingWindow', 8)), 2)
     detail = SKU_DETAIL_MAP.get(sku_id)
     if not detail:
         return None
     series = detail.get('fullTrend', detail.get('trend', []))
+    series = _apply_config_to_series(series)
     if len(series) >= 16:
-        detail = {**detail, "forecast": compute_sku_forecast(sku_id, horizon=12)}
+        detail = {**detail, "forecast": compute_sku_forecast(sku_id)}
         if sku_id not in BACKTEST_CACHE:
-            BACKTEST_CACHE[sku_id] = fe.backtest(series, n_splits=4, horizon=4)
+            BACKTEST_CACHE[sku_id] = fe.backtest(series, n_splits=4, horizon=bt_horizon)
         bt = BACKTEST_CACHE[sku_id]
         months = ["Run 1 (Jan)", "Run 2 (Apr)", "Run 3 (Jul)", "Run 4 (Oct)"]
         detail["backtestHistory"] = [
@@ -427,7 +504,7 @@ def get_sku_detail(sku_id: str):
         if bt.get("results"):
             detail["mape"] = bt["mape"]
             detail["bias"] = bt["bias"]
-        pattern = fe.detect_demand_pattern(series)
+        pattern = fe.detect_demand_pattern(series, seasonality_mode=cfg.get('seasonalityMode', 'auto'))
         detail["pattern"] = pattern
         detail["model"] = {
             'Seasonal': 'Holt-Winters',
@@ -438,7 +515,7 @@ def get_sku_detail(sku_id: str):
     else:
         detail["backtestHistory"] = []
         if len(series) >= 4:
-            detail = {**detail, "forecast": compute_sku_forecast(sku_id, horizon=12)}
+            detail = {**detail, "forecast": compute_sku_forecast(sku_id)}
     return detail
 
 def get_categories():

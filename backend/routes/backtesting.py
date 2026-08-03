@@ -11,14 +11,17 @@ router = APIRouter()
 
 @router.get("/api/tenants/nestle-fmcg-demo/backtesting/walk-forward")
 async def get_walk_forward(
-    horizon: int = Query(8, ge=2, le=26),
+    horizon: int | None = Query(None, ge=2, le=26),
     n_splits: int = Query(5, ge=2, le=20),
     sku_limit: int = Query(50, ge=1, le=100),
 ):
+    cfg = m5_data.get_app_config()
+    if horizon is None:
+        horizon = max(int(cfg.get('backtestingWindow', 8)), 2)
     m5_data._lazy_init()
     results = []
     for sku in m5_data.SKUS[:sku_limit]:
-        series = sku.get('fullTrend', sku['trend'])
+        series = m5_data._apply_config_to_series(sku.get('fullTrend', sku['trend']))
         raw = np.array(series, dtype=float)
         raw = np.nan_to_num(raw, nan=0.0)
         if len(raw) < horizon + n_splits + 4:
@@ -45,7 +48,7 @@ def _compute_walk_forward(arr: np.ndarray, sku: dict, horizon: int, n_splits: in
         train = arr[train_start:train_end]
         test = arr[test_start:test_end]
 
-        pattern = fe.detect_demand_pattern(train.tolist())
+        pattern = fe.detect_demand_pattern(train.tolist(), seasonality_mode=m5_data.get_app_config().get('seasonalityMode', 'auto'))
         fc = fe.forecast_for_pattern(train.tolist(), pattern, horizon)[
             'p50'
         ]

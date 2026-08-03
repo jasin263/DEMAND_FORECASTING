@@ -368,11 +368,12 @@ def _build_user_exceptions(skus: list[dict], week_order: list | None = None,
 
         # 3. High MAPE from the real backtest computed at load time
         mape = sku.get('mape') or 0
-        if mape > 25:
+        threshold = m5_data.get_app_config().get('exceptionThreshold', 25)
+        if mape > threshold:
             candidates.append({
                 **sku_ref,
                 "type": "high-mape",
-                "severity": "high" if mape > 35 else "medium",
+                "severity": "high" if mape > threshold * 1.4 else "medium",
                 "mape": round(float(mape), 1),
                 "_week": len(values) - 1,
             })

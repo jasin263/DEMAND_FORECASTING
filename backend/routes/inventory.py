@@ -11,11 +11,16 @@ router = APIRouter()
 @router.get("/api/tenants/nestle-fmcg-demo/inventory/optimization")
 async def get_inventory_optimization(
     sku_limit: int = Query(50, ge=1, le=100),
-    service_level: float = Query(0.975, ge=0.8, le=0.999),
-    lead_time_days: int = Query(14, ge=1, le=90),
+    service_level: float | None = Query(None, ge=0.8, le=0.999),
+    lead_time_days: int | None = Query(None, ge=1, le=90),
     holding_cost_pct: float = Query(0.25, ge=0.05, le=0.5),
     order_cost: float = Query(50, ge=5, le=500),
 ):
+    cfg = m5_data.get_app_config()
+    if service_level is None:
+        service_level = float(cfg.get('serviceLevelTarget', 97.5)) / 100.0
+    if lead_time_days is None:
+        lead_time_days = max(int(cfg.get('defaultLeadTime', 14)), 1)
     m5_data._lazy_init()
     results = []
     for sku in m5_data.SKUS[:sku_limit]:
@@ -30,6 +35,9 @@ async def get_inventory_optimization(
         lt_std = lead_time_days * 0.2
         safety = round(z * sqrt(lead_time_days * demand_std**2 + avg_daily**2 * lt_std**2), 1)
         reorder = round(avg_daily * lead_time_days + safety, 1)
+        moq = cfg.get('moq') or 0
+        if moq and reorder < moq:
+            reorder = float(moq)
         eoq = round(sqrt(2 * avg_daily * 365 * order_cost / (holding_cost_pct * (sku.get('sellPrice', 10) or 10))), 1)
         target = round(reorder + eoq * 0.5, 1)
         fill_rate = _fill_rate(service_level, z)

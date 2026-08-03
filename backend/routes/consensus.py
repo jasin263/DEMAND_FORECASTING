@@ -35,10 +35,11 @@ async def get_consensus(
     horizon: int = Query(12, ge=4, le=26),
 ):
     m5_data._lazy_init()
+    cfg = m5_data.get_app_config()
     results = []
     ml_mapes, stat_mapes, bl_mapes = [], [], []
     for sku in m5_data.SKUS[:sku_limit]:
-        series = sku.get('fullTrend', sku['trend'])
+        series = m5_data._apply_config_to_series(sku.get('fullTrend', sku['trend']))
         arr = np.array(series, dtype=float)
         arr = np.nan_to_num(arr, nan=0.0)
         if len(arr) < horizon + 4:
@@ -46,9 +47,10 @@ async def get_consensus(
         split = len(arr) - horizon
         train = arr[:split]
         test = arr[split:]
-        pattern = fe.detect_demand_pattern(train.tolist())
+        pattern = fe.detect_demand_pattern(train.tolist(), seasonality_mode=cfg.get('seasonalityMode', 'auto'))
         stat_fc = fe.forecast_for_pattern(train.tolist(), pattern, horizon)
-        ml_fc = mlf.auto_ml_forecast(train.tolist(), horizon, preferred='lightgbm')
+        ml_fc = mlf.auto_ml_forecast(train.tolist(), horizon, preferred='lightgbm',
+                                     seasonality_mode=cfg.get('seasonalityMode', 'auto'))
         # Judgmental channel: deterministic planner-style estimate (recent smoothed level)
         judg_level = float(np.mean(train[-8:])) if len(train) >= 8 else float(np.mean(train))
         judgmental = [judg_level] * horizon
