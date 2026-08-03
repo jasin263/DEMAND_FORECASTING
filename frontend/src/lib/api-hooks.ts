@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiGet, apiPut, apiPost, apiPatch, apiDelete } from './api-client';
+import { beginForecastRun, endForecastRun } from './forecast-run';
 import type {
   KPISummary,
   ForecastDataPoint,
@@ -370,6 +371,7 @@ export function useRerunForecast() {
   const execute = useCallback(async (): Promise<{ status: string; message: string; weeks: number }> => {
     setLoading(true);
     setError(null);
+    beginForecastRun();
     try {
       const result = await apiPost<{ status: string; message: string; weeks: number }>(
         '/forecast-timeseries/rerun', {}, 0,
@@ -381,6 +383,7 @@ export function useRerunForecast() {
       throw err;
     } finally {
       setLoading(false);
+      endForecastRun();
     }
   }, []);
 

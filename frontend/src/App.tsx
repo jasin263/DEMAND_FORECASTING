@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import AppLayout from './components/AppLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import ForecastRunningOverlay from './components/ForecastRunningOverlay';
 import ForecastDashboardPage from './pages/ForecastDashboardPage';
 import ExceptionsPage from './pages/ExceptionsPage';
 import ScenariosPage from './pages/ScenariosPage';
@@ -30,6 +31,7 @@ function ProtectedRoute({ children }: { children: React.ReactElement }) {
 export default function App() {
   return (
     <ErrorBoundary>
+      <ForecastRunningOverlay />
       <Routes>
         <Route path="/" element={<OnboardingWizardPage />} />
         <Route path="/dashboard" element={<AppLayout><ForecastDashboardPage /></AppLayout>} />

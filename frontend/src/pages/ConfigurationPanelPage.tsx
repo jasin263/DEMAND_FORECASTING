@@ -85,7 +85,6 @@ export default function ConfigurationPanelPage() {
   const [hasChanges, setHasChanges] = useState(false);
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [workspaceContext, setWorkspaceContext] = useState<{ workspaceName: string; industry: string; fileName?: string; mapping?: Record<string, unknown>; forecastHorizon?: number; granularity?: string; algorithm?: string } | null>(null);
-  const [forecastRunning, setForecastRunning] = useState(false);
   
   const { data: configData, loading, error, refetch } = useConfiguration();
   const { execute: saveConfig, loading: saving, error: saveError } = useSaveConfiguration();
@@ -143,12 +142,10 @@ export default function ConfigurationPanelPage() {
     if (hasChanges) {
       try { await saveConfig(config); setHasChanges(false); } catch {}
     }
-    setForecastRunning(true);
     try {
       await rerunForecast();
       navigate('/dashboard');
     } catch (err) {
-      setForecastRunning(false);
       toast.error('Forecast run failed. Check backend connection and try again.', { duration: 8000 });
     }
   };
@@ -184,16 +181,8 @@ export default function ConfigurationPanelPage() {
   }
 
   return (
-    <React.Fragment>
-      {forecastRunning && (
-        <div className="fixed inset-0 z-50 bg-background/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
-          <Loader2 size={48} className="animate-spin text-primary" />
-          <p className="text-lg font-semibold text-foreground">Running Forecast Engine</p>
-          <p className="text-sm text-muted-foreground">Processing your dataset with ML models…</p>
-        </div>
-      )}
-      <FeaturePageShell
-        title="Configuration Panel"
+    <FeaturePageShell
+      title="Configuration Panel"
         description="Tenant: Nestle FMCG Demo · All changes apply on next forecast run"
         actions={
           <div className="flex items-center gap-2">
@@ -294,7 +283,6 @@ export default function ConfigurationPanelPage() {
           </div>
         </div>
       </FeaturePageShell>
-    </React.Fragment>
   );
 }
 
