@@ -1,27 +1,147 @@
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
+import numpy as np
 from models import Scenario
+from data import m5_data
+from generic_dataset import DATASET_PROFILE
+import forecast_engine as fe
 
 router = APIRouter()
 
-SCENARIOS_STORE = [
-    {"id": "sc-001", "title": "Price Reduction on Beverages", "detail": "Reduce Nescafé and Milo prices by 12% for 4 weeks to counter competitor promotion", "impact": "Expected +18% volume uplift across beverage category", "status": "active", "createdAt": "2026-07-01T08:00:00Z"},
-    {"id": "sc-002", "title": "Safety Stock Increase: Snacks", "detail": "Raise safety stock from 8 to 14 days for Kurkure and Lay's ahead of festive season", "impact": "Service level projected to increase from 89% to 96%", "status": "active", "createdAt": "2026-06-28T10:30:00Z"},
-    {"id": "sc-003", "title": "Supplier Lead Time Reduction", "detail": "Negotiate lead time reduction from 14 to 10 days with top 3 suppliers", "impact": "Reduces safety stock requirement by 22% across 47 SKUs", "status": "draft", "createdAt": "2026-07-15T14:00:00Z"},
-    {"id": "sc-004", "title": "Discontinue Low-Margin SKUs", "detail": "Phase out 12 underperforming SKUs with margin <8% and forecast error >40%", "impact": "Frees 15% warehouse capacity, improves forecast accuracy by 3.2 pts", "status": "draft", "createdAt": "2026-07-10T09:15:00Z"},
-    {"id": "sc-005", "title": "Holiday Promotion Calendar", "detail": "Align 8 promotional events with Independence Day, Diwali, and Christmas demand peaks", "impact": "Projected 24% revenue lift during promotional periods", "status": "active", "createdAt": "2026-06-20T11:00:00Z"},
-    {"id": "sc-006", "title": "Warehouse Slotting Optimization", "detail": "Reorganize A/B/C slotting based on forecast velocity for top 20% of SKUs", "impact": "Picking efficiency +12%, reduces overtime by 8 hrs/week", "status": "draft", "createdAt": "2026-07-18T16:30:00Z"},
-    {"id": "sc-007", "title": "AI Model Refresh to LightGBM", "detail": "Switch from ETS to LightGBM for seasonal SKUs with >2 years of history", "impact": "Expected MAPE reduction from 14% to 9.5% for 32 seasonal SKUs", "status": "active", "createdAt": "2026-07-05T07:45:00Z"},
-    {"id": "sc-008", "title": "Cross-Docking: High-Velocity SKUs", "detail": "Implement cross-docking for top 10 SKUs by volume to reduce dwell time", "impact": "Reduces holding cost by 18% for high-velocity items", "status": "archived", "createdAt": "2026-05-12T13:00:00Z"},
-    {"id": "sc-009", "title": "Regional Demand Sensing", "detail": "Deploy store-level POS data integration for CA and TX locations", "impact": "Improves weekly forecast accuracy by 5-7% at state level", "status": "draft", "createdAt": "2026-07-22T10:00:00Z"},
-    {"id": "sc-010", "title": "Promotion Pass-Through Optimization", "detail": "Optimize trade promotion spend by identifying SKUs with highest price elasticity", "impact": "15% improvement in promo ROI across 200+ SKUs", "status": "draft", "createdAt": "2026-07-20T09:30:00Z"},
-    {"id": "sc-011", "title": "Service Level Policy Adjustment", "detail": "Adjust service level targets from 97.5% to 95% for low-margin categories", "impact": "Reduces safety stock cost by 11% without affecting revenue", "status": "draft", "createdAt": "2026-07-19T14:00:00Z"},
-    {"id": "sc-012", "title": "Multi-Echelon Inventory Review", "detail": "Review DC-to-store inventory policies for Household category", "impact": "Projected 9% reduction in total system inventory", "status": "draft", "createdAt": "2026-07-17T11:00:00Z"},
+# Seeded with real computed impacts on first GET; user-created scenarios
+# continue to be managed through the create/update/delete endpoints.
+SCENARIOS_STORE: list[dict] = []
+_SCENARIOS_SEEDED = False
+
+# Same elasticity constant as the simulation engine
+PRICE_ELASTICITY = -1.5
+
+SCENARIO_PRESETS = [
+    {
+        "id": "sc-001", "title": "20% Promo Lift with 10% Price Cut",
+        "detail": "Promo campaign boosting forecast output by 20% with a 10% price cut. Impact is recomputed by rerunning the forecast model on the real demand series.",
+        "status": "draft",
+        "params": {"promo_lift_pct": 20, "price_change_pct": -10},
+    },
+    {
+        "id": "sc-002", "title": "15% Price Cut (elasticity −1.5)",
+        "detail": "Permanent 15% price reduction plus 8% underlying demand growth, modeled with the same elasticity constant as the simulation engine.",
+        "status": "draft",
+        "params": {"price_change_pct": -15, "demand_shift_pct": 8},
+    },
+    {
+        "id": "sc-003", "title": "Supply Disruption: −30% Demand",
+        "detail": "30% demand suppression from a supply chain event — the input history is scaled down and the forecast refit on it.",
+        "status": "draft",
+        "params": {"demand_shift_pct": -30},
+    },
+    {
+        "id": "sc-004", "title": "Aggressive Growth Campaign",
+        "detail": "50% promo boost plus 30% demand growth from a launch campaign.",
+        "status": "draft",
+        "params": {"promo_lift_pct": 50, "demand_shift_pct": 30},
+    },
+    {
+        "id": "sc-005", "title": "Service Level 95% (from 97.5%)",
+        "detail": "Relax the service level target and measure the real safety-stock change across all SKUs.",
+        "status": "draft",
+        "params": {"service_level_target": 95.0},
+    },
+    {
+        "id": "sc-006", "title": "Lead Time 7 Days (from 14)",
+        "detail": "Supplier lead-time negotiation — recomputes the reorder quantity and safety stock for every SKU.",
+        "status": "draft",
+        "params": {"lead_time_days": 7},
+    },
 ]
+
+
+def _aggregate_series() -> list[float]:
+    m5_data._lazy_init()
+    return [ts['actual'] for ts in m5_data.FORECAST_TIMESERIES if ts['actual'] is not None]
+
+
+def _forecast_demand_sum(series: list[float], params: dict) -> float | None:
+    """12-week forecast demand total for the aggregate series under a parameter set."""
+    arr = np.array(series, dtype=float)
+    arr = np.nan_to_num(arr, nan=0.0)
+    if len(arr) < 12:
+        return None
+    pattern = fe.detect_demand_pattern(arr.tolist())
+    demand_shift = float(params.get('demand_shift_pct', 0))
+    promo_lift = float(params.get('promo_lift_pct', 0))
+    price_change = float(params.get('price_change_pct', 0))
+    if demand_shift:
+        arr = arr * (1 + demand_shift / 100)
+    fc = fe.forecast_for_pattern(arr.tolist(), pattern, 12)
+    p50 = np.array(fc['p50'])
+    if price_change:
+        p50 = p50 * (1 + (price_change / 100) * PRICE_ELASTICITY)
+    if promo_lift:
+        p50 = p50 * (1 + promo_lift / 100)
+    return float(np.sum(np.maximum(p50, 0)))
+
+
+def _inventory_totals(service_level_target: float | None = None,
+                      lead_time_days: int | None = None) -> tuple[float, float]:
+    """(safety_stock_sum, reorder_qty_sum) across all SKUs under the given policy."""
+    m5_data._lazy_init()
+    cfg = m5_data.get_app_config()
+    sl = service_level_target if service_level_target is not None else float(cfg.get('serviceLevelTarget', 97.5))
+    lt = lead_time_days if lead_time_days is not None else max(int(cfg.get('defaultLeadTime', 14)), 1)
+    safety_total = 0.0
+    reorder_total = 0.0
+    for sku in m5_data.SKUS:
+        series = sku.get('fullTrend', sku['trend'])
+        if not series:
+            continue
+        stats = fe.compute_inventory_stats(series, lead_time_days=lt, service_level_target=sl)
+        safety_total += stats.get('safetyStock', 0)
+        reorder_total += stats.get('reorderQty', 0)
+    return safety_total, reorder_total
+
+
+def _seed_scenarios():
+    global _SCENARIOS_SEEDED
+    if _SCENARIOS_SEEDED:
+        return
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    series = _aggregate_series()
+    baseline = _forecast_demand_sum(series, {}) if len(series) >= 12 else None
+
+    for preset in SCENARIO_PRESETS:
+        if preset['id'] == 'sc-005':
+            safety_base, _ = _inventory_totals()
+            safety_new, _ = _inventory_totals(service_level_target=95.0)
+            pct = (safety_new - safety_base) / max(safety_base, 1) * 100
+            impact = (
+                f"Safety stock across all SKUs changes by {pct:+.1f}% "
+                f"({safety_base:,.0f} → {safety_new:,.0f} units) at a 95% service level"
+            )
+        elif preset['id'] == 'sc-006':
+            _, reorder_base = _inventory_totals()
+            _, reorder_new = _inventory_totals(lead_time_days=7)
+            pct = (reorder_new - reorder_base) / max(reorder_base, 1) * 100
+            impact = (
+                f"Reorder quantity across all SKUs changes by {pct:+.1f}% "
+                f"({reorder_base:,.0f} → {reorder_new:,.0f} units) at a 7-day lead time"
+            )
+        elif baseline is not None:
+            sim = _forecast_demand_sum(series, preset['params'])
+            pct = (sim - baseline) / max(baseline, 1) * 100
+            impact = (
+                f"12-week forecast demand changes by {pct:+.1f}% "
+                f"({baseline:,.0f} → {sim:,.0f} units)"
+            )
+        else:
+            impact = 'Insufficient history to compute impact'
+        SCENARIOS_STORE.append({**preset, 'impact': impact, 'createdAt': now})
+    _SCENARIOS_SEEDED = True
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/scenarios", response_model=list[Scenario])
 async def get_scenarios():
+    _seed_scenarios()
     return list(SCENARIOS_STORE)
 
 

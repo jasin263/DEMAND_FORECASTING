@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import FeaturePageShell from '../components/FeaturePageShell';
 import { TrendingUp, Zap, ShieldCheck, Plus, AlertTriangle, ArrowLeftRight, Loader2 } from 'lucide-react';
-import { useScenarios } from '../lib/api-hooks';
+import { useScenarios, useKPISummary, useInventoryOptimization } from '../lib/api-hooks';
 import { apiPost } from '../lib/api-client';
 
 const impactColors: Record<string, string> = {
@@ -12,6 +12,8 @@ const impactColors: Record<string, string> = {
 
 export default function ScenariosPage() {
   const { data: scenarios, loading, error, refetch } = useScenarios();
+  const { data: kpi } = useKPISummary();
+  const { data: inventory } = useInventoryOptimization();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [comparingIds, setComparingIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
@@ -134,16 +136,24 @@ export default function ScenariosPage() {
               <div className="rounded-xl bg-muted/60 p-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                   <TrendingUp className="h-4 w-4 text-positive" />
-                  Expected service improvement
+                  Holdout service level
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">Service level is projected to increase by 3.2 points with the current buffer strategy.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {kpi?.serviceLevel != null
+                    ? `Forecast service level on the latest holdout is ${kpi.serviceLevel}% with bias ${kpi.forecastBias}% — scenarios above show how policy changes move the plan.`
+                    : 'Loading latest holdout metrics…'}
+                </p>
               </div>
               <div className="rounded-xl bg-muted/60 p-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                   <ShieldCheck className="h-4 w-4 text-primary" />
                   Inventory resilience
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">The recommended safety stock keeps 91% of the portfolio protected under a supply disruption.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {inventory
+                    ? `Recommended safety stock totals ${inventory.totalSafetyStock.toLocaleString()} units across ${inventory.skus.length} SKUs at a ${(inventory.avgServiceLevel * 100).toFixed(1)}% service level.`
+                    : 'Loading inventory position…'}
+                </p>
               </div>
             </div>
           </div>

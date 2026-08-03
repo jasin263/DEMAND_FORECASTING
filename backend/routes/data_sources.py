@@ -1,27 +1,63 @@
 from fastapi import APIRouter, HTTPException
-from typing import Literal
 from datetime import datetime, timezone
 from models import DataSource, DataSourceCreate
+from data import m5_data
+from generic_dataset import DATASET_PROFILE, PENDING_USER_DATASET
 
 router = APIRouter()
 
-DATA_SOURCES_STORE = [
-    {"id": "ds-001", "name": "SAP ERP (Production)", "status": "Connected", "freshness": "2 min ago", "type": "ERP", "lastSync": "2026-07-23T05:45:00Z"},
-    {"id": "ds-002", "name": "POS Feed (CA Stores)", "status": "Connected", "freshness": "15 min ago", "type": "POS", "lastSync": "2026-07-23T05:32:00Z"},
-    {"id": "ds-003", "name": "Supplier Portal (Tier 1)", "status": "Syncing", "freshness": "Syncing now", "type": "Supplier", "lastSync": "2026-07-23T05:40:00Z"},
-    {"id": "ds-004", "name": "Demand Sensing API", "status": "Connected", "freshness": "1 min ago", "type": "API", "lastSync": "2026-07-23T05:46:00Z"},
-    {"id": "ds-005", "name": "Warehouse WMS", "status": "Error", "freshness": "3 hours ago", "type": "ERP", "lastSync": "2026-07-23T02:15:00Z"},
-    {"id": "ds-006", "name": "Promotion Calendar (XLSX)", "status": "Disconnected", "freshness": "2 days ago", "type": "Manual", "lastSync": "2026-07-21T08:00:00Z"},
-]
+# Real connectors derived from the loaded dataset; user-added sources
+# (created/removed from the UI) are appended to the same store.
+DATA_SOURCES_STORE: list[dict] = []
+_SOURCE_SEEDED = False
+
+
+def _last_run_time() -> str:
+    m5_data._lazy_init()
+    history = m5_data.ACCURACY_HISTORY
+    if history:
+        return history[-1].get('date', '')
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _seed_real_sources():
+    global _SOURCE_SEEDED
+    if _SOURCE_SEEDED:
+        return
+    if DATASET_PROFILE:
+        name = DATASET_PROFILE.get('filename', 'Uploaded dataset')
+        rows = int(DATASET_PROFILE.get('rows', 0))
+        n_weeks = int(DATASET_PROFILE.get('n_weeks', 0))
+        DATA_SOURCES_STORE.append({
+            "id": "ds-001",
+            "name": name,
+            "status": "Connected",
+            "freshness": f"{rows:,} rows · {n_weeks} weeks",
+            "type": "Manual",
+            "lastSync": _last_run_time(),
+        })
+    pending = PENDING_USER_DATASET
+    if pending.get('file_bytes'):
+        DATA_SOURCES_STORE.append({
+            "id": "ds-002",
+            "name": f"{pending.get('filename', 'upload')} (staged)",
+            "status": "Syncing",
+            "freshness": "Staged — applied on next forecast run",
+            "type": "Manual",
+            "lastSync": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        })
+    _SOURCE_SEEDED = True
 
 
 @router.get("/api/tenants/nestle-fmcg-demo/data-sources", response_model=list[DataSource])
 async def get_data_sources():
+    _seed_real_sources()
     return list(DATA_SOURCES_STORE)
 
 
 @router.post("/api/tenants/nestle-fmcg-demo/data-sources", response_model=DataSource)
 async def create_data_source(body: DataSourceCreate):
+    _seed_real_sources()
     new_id = f"ds-{len(DATA_SOURCES_STORE) + 1:03d}"
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     new_source = {
