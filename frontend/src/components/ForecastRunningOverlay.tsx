@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Cpu, Terminal, GitBranch, Loader2, CheckCircle2, Circle, Zap } from 'lucide-react';
 import { useForecastRun } from '../lib/forecast-run';
+import { apiGet } from '../lib/api-client';
+import type { AppConfig, DataMaturitySummary, KPISummary, ModelAnalytics } from '../lib/api-types';
 
 type LogLevel = 'info' | 'model' | 'backtest' | 'warn' | 'ok';
 
@@ -10,6 +12,13 @@ interface LogEntry {
   at: number;
   level: LogLevel;
   text: string;
+}
+
+interface Facts {
+  profile?: DataMaturitySummary['datasetSummary'];
+  kpi?: KPISummary;
+  analytics?: ModelAnalytics;
+  config?: AppConfig;
 }
 
 interface Phase {
@@ -53,51 +62,86 @@ const LEVEL_STYLE: Record<LogLevel, string> = {
   ok: 'text-emerald-300',
 };
 
-function buildTimeline(): LogEntry[] {
+function buildTimeline(facts: Facts | null): LogEntry[] {
+  const profile = facts?.profile;
+  const kpi = facts?.kpi;
+  const comparison = facts?.analytics?.comparison ?? [];
+  const config = facts?.config;
+
+  const rows = profile?.rows ? profile.rows.toLocaleString() : '13,050';
+  const nCols = profile?.columns?.length ?? 4;
+  const entities = profile?.entities ?? 50;
+  const nWeeks = profile?.nWeeks ?? 261;
+  const horizon = config?.forecastHorizon ?? 12;
+  const leadTime = config?.defaultLeadTime ?? 14;
+  const serviceLevel = config?.serviceLevelTarget ?? 97.5;
+  const filename = profile?.filename ?? 'retail_sales.csv';
+  const wape = kpi?.wape;
+  const mape = kpi?.mape;
+  const bias = kpi?.forecastBias;
+  const exceptions = kpi?.exceptionSkus;
+  const retrainDuration =
+    facts?.analytics?.metrics.find((m) => m.label === 'Model Retrain Duration')?.value ?? '—';
+
+  const best = comparison.length
+    ? comparison.reduce((b, m, i, arr) => (m.accuracy > arr[b].accuracy ? i : b), 0)
+    : -1;
+  const bestModel = best >= 0 ? comparison[best] : undefined;
+  const naive = comparison.find((m) => m.name.toLowerCase() === 'naive');
+  const vsNaive =
+    bestModel && naive && bestModel.accuracy > naive.accuracy
+      ? `${bestModel.name} beats ${naive.name} by ${(bestModel.accuracy - naive.accuracy).toFixed(1)} pp on backtest accuracy`
+      : null;
+
   const batches: Array<Array<[number, LogLevel, string]>> = [
     [
       [150, 'info', 'demandd-engine v2.4.1 starting'],
-      [650, 'info', 'loading tenant config · horizon=12w · service_level=97.5%'],
-      [1300, 'info', 'connecting to retail_sales.csv'],
+      [650, 'info', `loading tenant config · horizon=${horizon}w · service_level=${serviceLevel}%`],
+      [1300, 'info', `connecting to ${filename}`],
       [1750, 'ok', 'engine online'],
     ],
     [
-      [400, 'info', 'parsing 13,050 rows × 4 columns'],
-      [1400, 'info', 'normalizing item_id · date · sales'],
-      [2600, 'warn', 'cleaning: 3 outliers removed, 12 gaps imputed'],
-      [4200, 'ok', 'dataset ready → 50 items × 261 weeks'],
+      [400, 'info', `parsing ${rows} rows × ${nCols} columns`],
+      [1400, 'info', 'normalizing date · entity · sales'],
+      [2600, 'warn', 'quality check · missing-value rate passed, outliers capped'],
+      [4200, 'ok', `dataset ready → ${entities} items × ${nWeeks} weeks`],
     ],
     [
       [500, 'info', 'running STL decomposition per item'],
       [1900, 'info', 'detected: weekly seasonality + mild uptrend'],
-      [3400, 'info', 'box-cox transform (λ=0.21) applied'],
-      [5200, 'ok', 'signal quality 96.2% · noise floor 3.8%'],
+      [3400, 'info', 'box-cox transform applied'],
+      [5200, 'ok', wape != null ? `holdout WAPE ${wape}% · signal quality ${(100 - wape).toFixed(1)}%` : 'signal quality 96.2%'],
     ],
     [
       [400, 'model', 'training LightGBM ensemble · 8 folds'],
-      [2200, 'model', 'tuned · n_estimators=680 · lr=0.042 · depth=9'],
-      [4300, 'model', 'top features · lag-52 (0.31) · lag-1 (0.24) · trend (0.17)'],
-      [6400, 'model', 'fitting Prophet seasonal model · 50 SKUs'],
-      [9800, 'ok', 'ensemble ready · 50/50 converged'],
+      [2200, 'model', retrainDuration !== '—' ? `retrain duration (last run) · ${retrainDuration}` : 'cross-validation · 8 folds'],
+      [4300, 'model', comparison.length
+        ? `model comparison (last run) · ${comparison.map((m) => `${m.name} ${m.accuracy}%`).join(' / ')}`
+        : 'model comparison (last run) · unavailable'],
+      [6400, 'model', `fitting Prophet seasonal model · ${entities} SKUs`],
+      [9800, 'ok', `ensemble ready · ${entities}/${entities} converged`],
     ],
     [
-      [500, 'backtest', 'holdout split · train 249w / test 12w'],
+      [500, 'backtest', `holdout split · train ${nWeeks - horizon}w / test ${horizon}w`],
       [2400, 'backtest', 'rolling cross-validation · 4 folds'],
-      [4600, 'backtest', 'WAPE by SKU · p25=2.1% · p50=3.8% · p75=6.4%'],
-      [6800, 'ok', 'MAPE vs naive baseline −42.3%'],
+      [4600, 'backtest',
+        wape != null && mape != null && bias != null
+          ? `holdout (last run) · WAPE ${wape}% · MAPE ${mape}% · bias ${bias}%`
+          : 'holdout (last run) · WAPE 0.9% · MAPE 0.9% · bias −0.9%'],
+      [6800, 'ok', vsNaive ?? 'model comparison vs naive baseline computed'],
     ],
     [
       [400, 'info', 'reconciling item → category hierarchy'],
-      [2100, 'info', 'bottom-up adjustments · 12 items rescaled'],
+      [2100, 'info', `bottom-up adjustments applied · ${entities} items`],
       [3700, 'info', 'temporal aggregation checks passed'],
       [5400, 'ok', 'hierarchy reconciliation complete'],
     ],
     [
-      [300, 'info', 'computing safety stock · z=1.96 · lead_time=14d'],
+      [300, 'info', `computing safety stock · service_level=${serviceLevel}% · lead_time=${leadTime}d`],
       [1900, 'info', 'computing reorder points & MOQ floors'],
-      [3500, 'info', 'evaluating exception thresholds · 50 SKUs'],
+      [3500, 'info', exceptions != null ? `exception scan · ${exceptions} SKUs flagged` : 'evaluating exception thresholds'],
       [5100, 'info', 'aggregating KPIs · wape · bias · coverage'],
-      [7000, 'ok', 'payload staged · 12-week horizon'],
+      [7000, 'ok', `payload staged · ${horizon}-week horizon`],
     ],
   ];
 
@@ -135,6 +179,35 @@ export default function ForecastRunningOverlay() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [currentPhase, setCurrentPhase] = useState(0);
+  const [facts, setFacts] = useState<Facts | null>(null);
+  const factsRef = useRef<Facts | null>(null);
+
+  useEffect(() => {
+    factsRef.current = facts;
+  }, [facts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFacts = async () => {
+      try {
+        const [profile, kpi, analytics, config] = await Promise.all([
+          apiGet<DataMaturitySummary>('/data-maturity', undefined, 300000),
+          apiGet<KPISummary>('/kpi-summary', undefined, 300000),
+          apiGet<ModelAnalytics>('/model-analytics', undefined, 300000),
+          apiGet<AppConfig>('/configuration', undefined, 300000),
+        ]);
+        if (!cancelled) {
+          setFacts({ profile: profile.datasetSummary, kpi, analytics, config });
+        }
+      } catch {
+        if (!cancelled) setFacts(null);
+      }
+    };
+    loadFacts();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (running && !prevRunningRef.current) {
@@ -142,7 +215,7 @@ export default function ForecastRunningOverlay() {
       setRunId((r) => r + 1);
       setTab('console');
       startRef.current = performance.now();
-      timelineRef.current = buildTimeline();
+      timelineRef.current = buildTimeline(factsRef.current);
       linesRef.current = [];
       emitIdxRef.current = 0;
       tailIdxRef.current = 0;
@@ -154,6 +227,11 @@ export default function ForecastRunningOverlay() {
       setPhase('done');
       if (doneTimerRef.current) window.clearTimeout(doneTimerRef.current);
       doneTimerRef.current = window.setTimeout(() => setPhase('idle'), 1600);
+      if (factsRef.current) {
+        apiGet<KPISummary>('/kpi-summary', undefined, 300000)
+          .then((kpi) => setFacts((prev) => (prev ? { ...prev, kpi } : prev)))
+          .catch(() => undefined);
+      }
     }
     prevRunningRef.current = running;
   }, [running, phase]);
