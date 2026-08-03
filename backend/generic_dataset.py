@@ -14,6 +14,52 @@ PENDING_USER_DATASET: dict[str, Any] = {}
 # Snapshot of the loaded dataset's structure — consumed by the maturity assessment modules
 DATASET_PROFILE: dict[str, Any] = {}
 
+# Where the uploaded dataset is persisted so it survives container restarts
+PERSIST_DIR = os.environ.get('PERSIST_DIR', '/data/pending')
+
+
+def persist_pending_dataset(file_bytes: bytes, filename: str, mapping: dict[str, Any]) -> None:
+    """Write the pending upload to the persistent volume (best-effort)."""
+    try:
+        os.makedirs(PERSIST_DIR, exist_ok=True)
+        with open(os.path.join(PERSIST_DIR, 'dataset.bin'), 'wb') as fh:
+            fh.write(file_bytes)
+        with open(os.path.join(PERSIST_DIR, 'filename.txt'), 'w', encoding='utf-8') as fh:
+            fh.write(filename)
+        with open(os.path.join(PERSIST_DIR, 'mapping.json'), 'w', encoding='utf-8') as fh:
+            json.dump(mapping, fh)
+    except OSError:
+        # No volume available (e.g. bare local run) — persistence is best-effort
+        pass
+
+
+def restore_persisted_dataset() -> bool:
+    """Load the persisted upload back into PENDING_USER_DATASET.
+
+    Called at boot so the previously uploaded dataset is used again
+    instead of falling back to the demo M5 data after a restart.
+    Returns True when a persisted dataset was restored.
+    """
+    try:
+        with open(os.path.join(PERSIST_DIR, 'dataset.bin'), 'rb') as fh:
+            file_bytes = fh.read()
+        with open(os.path.join(PERSIST_DIR, 'filename.txt'), 'r', encoding='utf-8') as fh:
+            filename = fh.read()
+        with open(os.path.join(PERSIST_DIR, 'mapping.json'), 'r', encoding='utf-8') as fh:
+            mapping = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    if not file_bytes:
+        return False
+    PENDING_USER_DATASET['file_bytes'] = file_bytes
+    PENDING_USER_DATASET['filename'] = filename
+    PENDING_USER_DATASET['mapping'] = mapping
+    try:
+        PENDING_USER_DATASET['light_profile'] = _light_profile(file_bytes, filename, mapping)
+    except Exception:
+        PENDING_USER_DATASET.pop('light_profile', None)
+    return True
+
 
 def _detect_granularity(df: pd.DataFrame, date_col: str) -> str:
     """Infer record frequency from the actual spacing between consecutive dates."""
