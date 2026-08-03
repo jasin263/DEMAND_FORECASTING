@@ -137,6 +137,51 @@ def profile_dataset(file_bytes: bytes, filename: str) -> dict[str, Any]:
     }
 
 
+def _light_profile(file_bytes: bytes, filename: str, mapping: dict[str, Any]) -> dict[str, Any]:
+    """Cheap structural profile of an uploaded file (no full column inference).
+
+    Computed once at save time and stored on PENDING_USER_DATASET so the
+    pipeline console can show the uploaded file's real shape before the
+    dataset is actually loaded by the rerun.
+    """
+    import pandas as pd
+
+    if filename.endswith('.csv'):
+        df = pd.read_csv(io.BytesIO(file_bytes))
+    elif filename.endswith(('.xlsx', '.xls')):
+        df = pd.read_excel(io.BytesIO(file_bytes))
+    else:
+        raise ValueError('Unsupported file type. Please upload CSV or Excel.')
+
+    target_col = mapping.get('target_column')
+    date_col = mapping.get('date_column')
+    entity_col = mapping.get('entity_column')
+
+    if target_col not in df.columns or date_col not in df.columns or entity_col not in df.columns:
+        auto = DatasetProfile(df).suggest_mapping()
+        target_col = target_col if target_col in df.columns else auto['target_column']
+        date_col = date_col if date_col in df.columns else auto['date_column']
+        entity_col = entity_col if entity_col in df.columns else auto['entity_column']
+
+    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+    df = df.dropna(subset=[date_col, target_col, entity_col])
+    df['week_key'] = df[date_col].dt.strftime('%G-W%V')
+    n_weeks = int(df['week_key'].nunique())
+
+    return {
+        'filename': filename,
+        'columns': [str(c) for c in df.columns],
+        'rows': int(len(df)),
+        'null_rate': round(float(df[target_col].isna().mean()), 4),
+        'granularity': _detect_granularity(df, date_col),
+        'n_weeks': n_weeks,
+        'entities': int(df[entity_col].nunique()),
+        'date_from': df[date_col].min().strftime('%Y-%m-%d'),
+        'date_to': df[date_col].max().strftime('%Y-%m-%d'),
+        **_detect_column_features(list(df.columns)),
+    }
+
+
 def load_user_dataset_into_m5(file_bytes: bytes, filename: str, mapping: dict[str, Any]) -> None:
     """Process user CSV and replace m5_data globals with the user's demand data."""
     import pandas as pd
