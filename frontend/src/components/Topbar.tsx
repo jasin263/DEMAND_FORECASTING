@@ -84,18 +84,6 @@ export default function Topbar({ sidebarCollapsed: _ }: TopbarProps) {
           <Bell size={16} />
           <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-warning" />
         </button>
-
-        {/* User */}
-        <button className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-muted transition-colors ml-1">
-          <div className="w-7 h-7 rounded-full gradient-primary flex items-center justify-center text-xs font-bold text-white">
-            AP
-          </div>
-          <div className="hidden md:block text-left">
-            <p className="text-xs font-medium text-foreground">Anika Patel</p>
-            <p className="text-xs text-muted-foreground">Demand Planner</p>
-          </div>
-          <ChevronDown size={12} className="text-muted-foreground hidden md:block" />
-        </button>
       </div>
     </header>
   );
